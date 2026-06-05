@@ -29,7 +29,7 @@ struct LoginView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
 
-                    // ── Logo + title ────────────────────────────────────
+                    // ── Logo + title ────────────────────────────────────────────────
                     HStack {
                         Spacer()
                         VStack(spacing: 12) {
@@ -48,14 +48,15 @@ struct LoginView: View {
                     }
                     .padding(.top, 32)
 
-                    // ── Username field ──────────────────────────────────
+                    // ── Username field ──────────────────────────────────────────────
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Username")
                             .font(.subheadline)
                             .fontWeight(.medium)
                             .foregroundStyle(Color.primary)
 
-                        TextField("Enter username", text: $viewModel.username)
+                        TextField("name@acmebank.com", text: $viewModel.username)
+                            .keyboardType(.emailAddress)
                             .textContentType(.username)
                             .autocorrectionDisabled()
                             .textInputAutocapitalization(.never)
@@ -67,7 +68,7 @@ struct LoginView: View {
                             .accessibilityIdentifier("usernameField")
                     }
 
-                    // ── Password field ──────────────────────────────────
+                    // ── Password field ──────────────────────────────────────────────
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Password")
                             .font(.subheadline)
@@ -87,14 +88,21 @@ struct LoginView: View {
                         .accessibilityIdentifier("passwordField")
                     }
 
-                    // ── Inline error banner ─────────────────────────────
+                    // ── Inline error banner ─────────────────────────────────────────
                     InlineErrorBannerView(message: viewModel.errorMessage)
 
-                    // ── Keep me signed in + Need help ───────────────────
+                    // ── Keep me signed in + Need help ───────────────────────────────
                     HStack {
-                        Toggle(isOn: $viewModel.keepSignedIn) {
-                            Text("Keep me signed in")
-                                .font(.subheadline)
+                        Button {
+                            viewModel.keepSignedIn.toggle()
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: viewModel.keepSignedIn ? "checkmark.square.fill" : "square")
+                                    .foregroundStyle(viewModel.keepSignedIn ? Color.acmeNavy : Color.secondary)
+                                Text("Keep me signed in")
+                                    .font(.subheadline)
+                                    .foregroundStyle(Color.primary)
+                            }
                         }
                         .accessibilityIdentifier("keepSignedInToggle")
 
@@ -113,7 +121,7 @@ struct LoginView: View {
                         .accessibilityIdentifier("needHelpButton")
                     }
 
-                    // ── Sign in button ──────────────────────────────────
+                    // ── Sign in button ──────────────────────────────────────────────
                     Button {
                         viewModel.signIn()
                     } label: {
@@ -134,7 +142,7 @@ struct LoginView: View {
                     .disabled(!viewModel.isSignInEnabled)
                     .accessibilityIdentifier("signInButton")
 
-                    // ── Open account ────────────────────────────────────
+                    // ── Open account ────────────────────────────────────────────────
                     HStack {
                         Spacer()
                         HStack(spacing: 4) {
@@ -164,11 +172,11 @@ struct LoginView: View {
             OktaFooterView()
         }
         .ignoresSafeArea(edges: .top)
-        // ── Help sheet ──────────────────────────────────────────────────
+        // ── Help sheet ──────────────────────────────────────────────────────────────
         .sheet(isPresented: $isHelpSheetPresented) {
             HelpPlaceholderView()
         }
-        // ── Open account sheet ──────────────────────────────────────────
+        // ── Open account sheet ──────────────────────────────────────────────────────
         .sheet(isPresented: $isOpenAccountSheetPresented) {
             OpenAccountPlaceholderView()
         }

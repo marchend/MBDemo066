@@ -124,13 +124,20 @@ final class LoginViewModelTests: XCTestCase {
         XCTAssertEqual(vm.errorMessage, "Incorrect username or password.")
     }
 
-    func test_errorMessage_doesNotResetOnFieldChanges() {
+    func test_errorMessage_clearsWhenUsernameChanges() {
         let vm = LoginViewModel()
         vm.errorMessage = "Some error"
         vm.username = "new_user"
+        // errorMessage should be cleared by the didSet observer on username
+        XCTAssertNil(vm.errorMessage)
+    }
+
+    func test_errorMessage_clearsWhenPasswordChanges() {
+        let vm = LoginViewModel()
+        vm.errorMessage = "Some error"
         vm.password = "new_pass"
-        // errorMessage should remain unchanged — the ViewModel does not own the trigger
-        XCTAssertEqual(vm.errorMessage, "Some error")
+        // errorMessage should be cleared by the didSet observer on password
+        XCTAssertNil(vm.errorMessage)
     }
 
     // MARK: - keepSignedIn passed through signIn

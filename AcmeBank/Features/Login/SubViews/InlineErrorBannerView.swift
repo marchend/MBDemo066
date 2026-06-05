@@ -1,32 +1,33 @@
 import SwiftUI
 
 /// A reusable inline error strip.
-/// Hidden when `message` is `nil`; visible (with correct copy) when set.
+/// Renders nothing when `message` is `nil`, so it takes no layout space on clean load.
+/// Appears with the error copy when `message` is non-nil.
 struct InlineErrorBannerView: View {
     let message: String?
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(Color.red)
+        if let message {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(Color.red)
 
-            Text(message ?? "")
-                .font(.subheadline)
-                .foregroundStyle(Color.red)
-                .multilineTextAlignment(.leading)
-                .fixedSize(horizontal: false, vertical: true)
+                Text(message)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.red)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
 
-            Spacer()
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.red.opacity(0.08))
+            )
+            .accessibilityIdentifier("inlineErrorBanner")
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color.red.opacity(0.08))
-        )
-        .opacity(message == nil ? 0 : 1)
-        .accessibilityIdentifier("inlineErrorBanner")
-        .accessibilityHidden(message == nil)
     }
 }
 

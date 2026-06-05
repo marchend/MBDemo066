@@ -11,8 +11,12 @@ final class LoginViewModel: ObservableObject {
 
     // MARK: - Published state
 
-    @Published var username: String = ""
-    @Published var password: String = ""
+    @Published var username: String = "" {
+        didSet { errorMessage = nil }
+    }
+    @Published var password: String = "" {
+        didSet { errorMessage = nil }
+    }
     @Published var keepSignedIn: Bool = false
     @Published var isPasswordVisible: Bool = false
     @Published var errorMessage: String?
