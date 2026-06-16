@@ -51,13 +51,19 @@ AcmeBank/
 ├── App/
 │   ├── AcmeBankApp.swift       # @main entry point (implemented)
 │   └── ContentView.swift       # Hello World view (implemented)
+├── Core/
+│   └── Auth/                   # OktaConfig, UserSession, KeychainStore, AuthService (implemented)
+├── Features/
+│   └── Login/                  # LoginView + LoginViewModel + sub-views (implemented)
 ├── Info.plist.example          # Okta plist template (implemented; working copy .gitignored)
 └── Resources/
     ├── Assets.xcassets/        # AppIcon stub (implemented)
     ├── PrivacyInfo.xcprivacy   # Privacy manifest (implemented)
     └── AcmeBank.entitlements   # Keychain access group stub (implemented)
 AcmeBankTests/
-└── AcmeBankTests.swift         # Trivial smoke test (implemented)
+├── AcmeBankTests.swift         # Trivial smoke test (implemented)
+├── Auth/                       # OktaConfig / UserSession / KeychainStore / AuthService tests (implemented)
+└── Features/Login/             # LoginView + LoginViewModel tests (implemented)
 AcmeBankUITests/                # XCUITest target (implemented as an empty target;
                                 #   the XCUITest sources land in a follow-on PR)
 project.yml                     # XcodeGen spec (implemented)
@@ -100,18 +106,19 @@ AcmeBankUITests/     # XCUITest — critical-flow end-to-end tests
 | `okta-mobile-swift` SPM dependency (pinned 2.x minor) | ✅ implemented in MD066 |
 | `Inject Okta Config` pre-build script + `Info.plist.example` | ✅ implemented in MD066 |
 | `AcmeBankUITests` target definition (empty) | ✅ implemented in MD066 |
-| `OktaConfig.swift` (runtime sentinel detection + `.load()`) | ⏳ deferred — follow-on PR |
+| Login feature (View + ViewModel) | ✅ implemented in MD066-2 PR 1 |
+| `OktaConfig.swift` (runtime sentinel detection + `.load()`) | ✅ implemented in MD066-2 PR 2 |
+| `AuthService` / `OktaAuthService` (Okta DirectAuth) | ✅ implemented in MD066-2 PR 2 |
+| `KeychainStore` / `UserSession` | ✅ implemented in MD066-2 PR 2 |
 | "Okta is not configured on this build" inline banner | ⏳ deferred — follow-on PR |
 | XCUITest sources (`XCTSkipUnless` sign-in flow) | ⏳ deferred — follow-on PR |
 | `AppCoordinator` + `RootView` (auth-state switching) | ⏳ deferred — future PR |
-| Okta OIDC authentication (`AuthService`) | ⏳ deferred — future PR |
-| `KeychainStore` / `UserSession` | ⏳ deferred — future PR |
 | `APIClient` / `APIRouter` / `APIError` / `RequestInterceptor` | ⏳ deferred — future PR |
 | Domain models (Account, Transaction, Customer) | ⏳ deferred — future PR |
 | Repository protocols (`Domain/Repositories/`) | ⏳ deferred — future PR |
 | Remote repositories (`Data/Remote/`) | ⏳ deferred — future PR |
 | Mock repositories (`Data/Mock/`) | ⏳ deferred — future PR |
-| Login feature (View + ViewModel + Coordinator) | ⏳ deferred — future PR |
+| Login coordinator (wires `OktaAuthService` to `LoginView`) | ⏳ deferred — MD066-2 PR 3 |
 | Home feature (View + ViewModel + Coordinator) | ⏳ deferred — future PR |
 | Accounts / Transfer / Cards features | ⏳ deferred — future PR |
 | Design system (Colors, Typography) | ⏳ deferred — future PR |
@@ -132,6 +139,35 @@ var query: [String: Any] = [
   kSecUseDataProtectionKeychain as String:  true,   // required for CI
 ]
 ```
+`AcmeBank/Core/Auth/KeychainStore.swift` already enforces this for the three
+Okta token slots (`acme.okta.idToken` / `acme.okta.accessToken` /
+`acme.okta.refreshToken`); use it rather than re-implementing the SecItem
+dance, and use the `KeychainStoring` protocol when you need to inject a
+test double.
+
+## Auth core (for feature agents)
+`AcmeBank/Core/Auth/` ships the pure (UI-free) auth layer:
+
+- `OktaConfig.load()` returns `.configured(...)` from a real `Info.plist`,
+  `.notConfigured(reason)` when any of the four `OktaIssuer` / `OktaClientId` /
+  `OktaRedirectUri` / `OktaScopes` keys is missing, sentinel, or malformed.
+  NEVER traps — safe to call at app launch on a CI build with no `OKTA_*`
+  env vars.
+- `UserSession` decodes the OIDC ID-token claims (`sub` / `name` / `email` /
+  `auth_time`) and pairs them with the access token. Throws a typed
+  `DecodeError` on structural failures.
+- `KeychainStore` (protocol `KeychainStoring`, prod impl `SystemKeychainStore`)
+  persists tokens with `kSecUseDataProtectionKeychain: true` on every query.
+- `AuthService` (protocol `AuthServicing`, prod impl `OktaAuthService`)
+  wraps `okta-mobile-swift`'s `DirectAuthenticationFlow` behind a
+  `DirectAuthenticationFlowProtocol` seam so unit tests don't hit the
+  network. Constructor-injects both the `KeychainStoring` and a flow
+  factory. **Critical invariant:** every error escaping `signIn` is an
+  `AuthError` — keychain write failures are SWALLOWED inside `signIn`
+  (they're a cache, not a hard requirement) and JWT decode failures map
+  to `AuthError.invalidServerResponse`, NEVER to `.network`. The Login UI
+  does `catch let e as AuthError`, so a non-`AuthError` escape produces
+  a misleading "couldn't reach Okta" banner for a 200 OK.
 
 ## Okta build config (for feature agents)
 The build-time half of the Okta config is **already wired**: the four Okta
@@ -145,14 +181,14 @@ env-inheritance note, and the `.gitignore` / `Info.plist.example` security
 pattern (the working `AcmeBank/Info.plist` must NEVER be tracked because the
 script writes real tenant values into it).
 
-The **runtime half is still future work** (status table above). When you
-implement `OktaConfig.load()`, it MUST detect the `__OKTA_NOT_CONFIGURED__`
-sentinel that the script writes when any `OKTA_*` env var is unset and return
+The runtime half is implemented in `AcmeBank/Core/Auth/OktaConfig.swift`:
+it detects the `__OKTA_NOT_CONFIGURED__` sentinel and returns
 `.notConfigured(reason)` lazily — never `fatalError` / `preconditionFailure` /
-force-unwrap on missing config at launch, or the app crashes on CI builds
-that have no `OKTA_*` env vars set. The corresponding XCUITest MUST guard
-the sign-in end-to-end test with `XCTSkipUnless(OktaConfig.load().isConfigured)`
-so the test reports `XCTSkip`, not failure, on a CI build without env vars.
+force-unwrap on missing config at launch, so the app boots cleanly on CI
+builds that have no `OKTA_*` env vars set. The corresponding XCUITest (still
+deferred) MUST guard the sign-in end-to-end test with
+`XCTSkipUnless(OktaConfig.load().isConfigured)` so the test reports
+`XCTSkip`, not failure, on a CI build without env vars.
 
 ## Git Workflow
 
