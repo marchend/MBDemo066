@@ -20,6 +20,15 @@ struct LoginView: View {
         _viewModel = StateObject(wrappedValue: LoginViewModel(onSignIn: onSignIn))
     }
 
+    /// Composition-root init: lets the `AppCoordinator` own the
+    /// `LoginViewModel` so it can mutate `errorMessage` / `isSigningIn`
+    /// on the SAME instance the view renders. Without this, the
+    /// coordinator's mutations would land on a different viewModel
+    /// from the one driving the on-screen form.
+    init(viewModel: LoginViewModel) {
+        _viewModel = StateObject(wrappedValue: viewModel)
+    }
+
     // MARK: - Body
 
     var body: some View {
@@ -29,7 +38,7 @@ struct LoginView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
 
-                    // ── Logo + title ────────────────────────────────────────────────
+                    // ── Logo + title ─────────────────────────────────────────────
                     HStack {
                         Spacer()
                         VStack(spacing: 12) {
@@ -48,7 +57,7 @@ struct LoginView: View {
                     }
                     .padding(.top, 32)
 
-                    // ── Username field ──────────────────────────────────────────────
+                    // ── Username field ───────────────────────────────────────────
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Username")
                             .font(.subheadline)
@@ -60,6 +69,7 @@ struct LoginView: View {
                             .textContentType(.username)
                             .autocorrectionDisabled()
                             .textInputAutocapitalization(.never)
+                            .disabled(viewModel.isSigningIn)
                             .padding(12)
                             .background(
                                 RoundedRectangle(cornerRadius: 8)
@@ -68,7 +78,7 @@ struct LoginView: View {
                             .accessibilityIdentifier("usernameField")
                     }
 
-                    // ── Password field ──────────────────────────────────────────────
+                    // ── Password field ───────────────────────────────────────────
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Password")
                             .font(.subheadline)
@@ -79,6 +89,7 @@ struct LoginView: View {
                             text: $viewModel.password,
                             isVisible: $viewModel.isPasswordVisible
                         )
+                        .disabled(viewModel.isSigningIn)
                         .padding(.leading, 12)
                         .padding(.trailing, 4)
                         .background(
@@ -88,10 +99,10 @@ struct LoginView: View {
                         .accessibilityIdentifier("passwordField")
                     }
 
-                    // ── Inline error banner ─────────────────────────────────────────
+                    // ── Inline error banner ──────────────────────────────────────
                     InlineErrorBannerView(message: viewModel.errorMessage)
 
-                    // ── Keep me signed in + Need help ───────────────────────────────
+                    // ── Keep me signed in + Need help ────────────────────────────
                     HStack {
                         Button {
                             viewModel.keepSignedIn.toggle()
@@ -104,6 +115,7 @@ struct LoginView: View {
                                     .foregroundStyle(Color.primary)
                             }
                         }
+                        .disabled(viewModel.isSigningIn)
                         .accessibilityIdentifier("keepSignedInToggle")
 
                         Spacer()
@@ -121,15 +133,23 @@ struct LoginView: View {
                         .accessibilityIdentifier("needHelpButton")
                     }
 
-                    // ── Sign in button ──────────────────────────────────────────────
+                    // ── Sign in button ───────────────────────────────────────────
                     Button {
                         viewModel.signIn()
                     } label: {
-                        Text("Sign in")
-                            .font(.body)
-                            .fontWeight(.semibold)
-                            .foregroundStyle(.white)
-                            .frame(maxWidth: .infinity, minHeight: 44)
+                        HStack(spacing: 8) {
+                            if viewModel.isSigningIn {
+                                ProgressView()
+                                    .progressViewStyle(.circular)
+                                    .tint(.white)
+                                    .accessibilityIdentifier("signInSpinner")
+                            }
+                            Text("Sign in")
+                                .font(.body)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(.white)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 44)
                     }
                     .background(
                         RoundedRectangle(cornerRadius: 10)
@@ -142,7 +162,7 @@ struct LoginView: View {
                     .disabled(!viewModel.isSignInEnabled)
                     .accessibilityIdentifier("signInButton")
 
-                    // ── Open account ────────────────────────────────────────────────
+                    // ── Open account ─────────────────────────────────────────────
                     HStack {
                         Spacer()
                         HStack(spacing: 4) {
@@ -172,11 +192,11 @@ struct LoginView: View {
             OktaFooterView()
         }
         .ignoresSafeArea(edges: .top)
-        // ── Help sheet ──────────────────────────────────────────────────────────────
+        // ── Help sheet ───────────────────────────────────────────────────────────
         .sheet(isPresented: $isHelpSheetPresented) {
             HelpPlaceholderView()
         }
-        // ── Open account sheet ──────────────────────────────────────────────────────
+        // ── Open account sheet ───────────────────────────────────────────────────
         .sheet(isPresented: $isOpenAccountSheetPresented) {
             OpenAccountPlaceholderView()
         }
