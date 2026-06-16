@@ -123,6 +123,19 @@ var query: [String: Any] = [
 ]
 ```
 
+## Okta build config (for feature agents)
+Okta tenant values (`OktaIssuer`, `OktaClientId`, `OktaRedirectUri`, `OktaScopes`)
+are injected into the built `Info.plist` by the `Inject Okta Config` Run Script
+phase on the `AcmeBank` target, reading the four `OKTA_*` env vars from the build
+machine — see the "Okta build configuration" section in `README.md` for the env
+var names, the three setup methods (`launchctl setenv` / `~/.zshrc` + `xed .` /
+per-command `xcodebuild` export), and the `PhaseScriptExecution` env-inheritance
+note. When any env var is unset the script writes the sentinel string
+`__OKTA_NOT_CONFIGURED__` and the build stays green; `OktaConfig.load()` MUST
+detect that sentinel and return `.notConfigured(reason)` lazily — never
+`fatalError` / `preconditionFailure` / force-unwrap on missing config at launch,
+or the app crashes on CI builds that have no `OKTA_*` env vars set.
+
 ## Git Workflow
 
 > **Default PR target branch: `develop`.** Every feature/refactor/docs PR

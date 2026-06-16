@@ -3,12 +3,19 @@ options:
   bundleIdPrefix: com.acmebank
   deploymentTarget:
     iOS: "17.0"
+packages:
+  okta-mobile-swift:
+    url: https://github.com/okta/okta-mobile-swift
+    from: "2.0.0"
 targets:
   AcmeBank:
     type: application
     platform: iOS
     sources: [AcmeBank]
     resources: [AcmeBank/Resources]
+    dependencies:
+      - package: okta-mobile-swift
+        product: OktaDirectAuth
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.acmebank.mobile
@@ -20,16 +27,74 @@ targets:
         CODE_SIGNING_REQUIRED: "NO"
         ENABLE_USER_SCRIPT_SANDBOXING: "NO"
         CODE_SIGN_ENTITLEMENTS: AcmeBank/AcmeBank.entitlements
+    preBuildScripts:
+      - name: Inject Okta Config
+        basedOnDependencyAnalysis: false
+        inputFiles:
+          - ${SRCROOT}/AcmeBank/Info.plist
+        script: |
+          set -u
+          INFOPLIST="${SRCROOT}/AcmeBank/Info.plist"
+          SENTINEL="__OKTA_NOT_CONFIGURED__"
+
+          # Ensure the Info.plist exists before plutil tries to edit it.
+          # Xcode's GENERATE_INFOPLIST_FILE creates the BUILT plist in DerivedData,
+          # but this script targets the SOURCE plist that gets processed into the
+          # bundle. Create a minimal one if it doesn't exist yet.
+          if [ ! -f "$INFOPLIST" ]; then
+            /bin/cat > "$INFOPLIST" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict/>
+          </plist>
+          PLIST
+          fi
+
+          inject_key() {
+            KEY="$1"
+            VALUE="$2"
+            if [ -z "$VALUE" ]; then
+              echo "warning: $KEY env var is unset — writing sentinel '$SENTINEL' to Info.plist. App will surface the 'not configured' banner at runtime."
+              VALUE="$SENTINEL"
+            fi
+            # -replace creates the key if it doesn't already exist.
+            /usr/bin/plutil -replace "$KEY" -string "$VALUE" "$INFOPLIST" || \
+              /usr/bin/plutil -insert "$KEY" -string "$VALUE" "$INFOPLIST"
+          }
+
+          inject_key OktaIssuer       "${OKTA_ISSUER:-}"
+          inject_key OktaClientId     "${OKTA_CLIENT_ID:-}"
+          inject_key OktaRedirectUri  "${OKTA_REDIRECT_URI:-}"
+          inject_key OktaScopes       "${OKTA_SCOPES:-}"
+
+          # NEVER exit 1 — CI tolerance is a hard requirement (see README,
+          # "Okta build configuration"). A missing env var must produce a
+          # green build with sentinels, not a failed PhaseScriptExecution.
+          exit 0
   AcmeBankTests:
     type: bundle.unit-test
     platform: iOS
     sources: [AcmeBankTests]
     dependencies:
       - target: AcmeBank
+  AcmeBankUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [AcmeBankUITests]
+    dependencies:
+      - target: AcmeBank
+    info:
+      path: AcmeBankUITests/Info.plist
+      properties:
+        CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
+        CFBundlePackageType: BNDL
 schemes:
   AcmeBank:
     build:
       targets: { AcmeBank: all }
     test:
-      targets: [AcmeBankTests]
+      targets:
+        - AcmeBankTests
+        - AcmeBankUITests
       parallelizable: false
