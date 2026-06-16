@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+      Template for AcmeBank/Info.plist.
+
+      The actual `AcmeBank/Info.plist` is .gitignored and is created from this
+      template by the `Inject Okta Config` pre-build script in `project.yml`.
+      The script then overwrites the four Okta* values below using the
+      OKTA_ISSUER / OKTA_CLIENT_ID / OKTA_REDIRECT_URI / OKTA_SCOPES env
+      vars on the build machine, or leaves the `__OKTA_NOT_CONFIGURED__`
+      sentinel in place when those env vars are unset (CI tolerance — see
+      README, "Okta build configuration").
+
+      DO NOT commit real Okta tenant values into this file. Real values
+      belong in env vars on the developer / CI machine, never in source.
+    -->
+    <key>OktaIssuer</key>
+    <string>__OKTA_NOT_CONFIGURED__</string>
+    <key>OktaClientId</key>
+    <string>__OKTA_NOT_CONFIGURED__</string>
+    <key>OktaRedirectUri</key>
+    <string>__OKTA_NOT_CONFIGURED__</string>
+    <key>OktaScopes</key>
+    <string>__OKTA_NOT_CONFIGURED__</string>
+</dict>
+</plist>

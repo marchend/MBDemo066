@@ -6,7 +6,10 @@ options:
 packages:
   okta-mobile-swift:
     url: https://github.com/okta/okta-mobile-swift
-    from: "2.0.0"
+    # Pinned to the 2.x minor line. `minorVersion` resolves to
+    # "up to next minor" semantics in XcodeGen / SwiftPM, so a breaking
+    # 3.x release will NOT be picked up automatically on a clean build.
+    minorVersion: "2.0.0"
 targets:
   AcmeBank:
     type: application
@@ -20,7 +23,16 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.acmebank.mobile
         SWIFT_VERSION: "5.10"
-        GENERATE_INFOPLIST_FILE: YES
+        # GENERATE_INFOPLIST_FILE is intentionally OFF. Xcode's generated
+        # plist lives in DerivedData and is synthesised from build settings,
+        # so it would never see the OktaIssuer / OktaClientId / OktaRedirectUri
+        # / OktaScopes keys written by the `Inject Okta Config` pre-build
+        # script. Instead we ship a source-tree `AcmeBank/Info.plist` (created
+        # on demand from `AcmeBank/Info.plist.example`) that Xcode copies and
+        # variable-expands into the built bundle, so the injected keys reach
+        # `Bundle.main.infoDictionary` at runtime.
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: AcmeBank/Info.plist
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         CODE_SIGNING_ALLOWED: "NO"
@@ -31,24 +43,34 @@ targets:
       - name: Inject Okta Config
         basedOnDependencyAnalysis: false
         inputFiles:
-          - ${SRCROOT}/AcmeBank/Info.plist
+          - ${SRCROOT}/AcmeBank/Info.plist.example
         script: |
           set -u
           INFOPLIST="${SRCROOT}/AcmeBank/Info.plist"
+          TEMPLATE="${SRCROOT}/AcmeBank/Info.plist.example"
           SENTINEL="__OKTA_NOT_CONFIGURED__"
 
-          # Ensure the Info.plist exists before plutil tries to edit it.
-          # Xcode's GENERATE_INFOPLIST_FILE creates the BUILT plist in DerivedData,
-          # but this script targets the SOURCE plist that gets processed into the
-          # bundle. Create a minimal one if it doesn't exist yet.
+          # `AcmeBank/Info.plist` is .gitignored (see SECURITY note in README).
+          # Real Okta tenant values may be written into it on a developer
+          # machine, so the file MUST NOT be tracked. On a fresh clone the
+          # file does not exist yet — seed it from the committed template
+          # `AcmeBank/Info.plist.example`, which contains only sentinel
+          # placeholders.
           if [ ! -f "$INFOPLIST" ]; then
-            /bin/cat > "$INFOPLIST" <<'PLIST'
+            if [ -f "$TEMPLATE" ]; then
+              /bin/cp "$TEMPLATE" "$INFOPLIST"
+            else
+              # Last-resort fallback so a missing template never breaks the
+              # build. CI tolerance is a hard requirement (see README,
+              # "Okta build configuration").
+              /bin/cat > "$INFOPLIST" <<'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict/>
           </plist>
           PLIST
+            fi
           fi
 
           inject_key() {

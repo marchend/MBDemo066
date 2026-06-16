@@ -45,16 +45,54 @@ See [CLAUDE.md](CLAUDE.md) for full architecture documentation.
 
 - **Platform:** iOS 17+, Swift 5.10
 - **UI:** SwiftUI + MVVM + Coordinator (`NavigationStack`)
-- **Auth:** Okta OIDC (`okta-mobile-swift`)
+- **Auth:** Okta OIDC (`okta-mobile-swift`, pinned to the 2.x minor line)
 - **Networking:** `URLSession` + async/await
 - **Tests:** XCTest (unit) + XCUITest (critical flows)
+
+## Scope of this PR (MD066)
+
+This PR delivers the **infrastructure / configuration layer** for Okta
+DirectAuth only:
+
+- The `okta-mobile-swift` SPM dependency, pinned to the 2.x minor line.
+- The `AcmeBankUITests` target definition + scheme wiring (an empty target —
+  no XCUITest sources yet).
+- The `Inject Okta Config` pre-build script that writes the four `OKTA_*`
+  env vars into `AcmeBank/Info.plist`, or writes the `__OKTA_NOT_CONFIGURED__`
+  sentinel when they are unset.
+- The committed `AcmeBank/Info.plist.example` template and the `.gitignore`
+  entry that keeps the working `AcmeBank/Info.plist` out of version control.
+- The developer documentation below.
+
+The runtime pieces — `OktaConfig.swift`, `AuthService.swift`, the login
+feature, the "Okta is not configured on this build" banner, and the
+`XCTSkipUnless`-guarded XCUITest — are **deferred to follow-on PRs**. Until
+those land, the behaviour described in the [CI tolerance](#ci-tolerance)
+section is **forward-looking** (what the build will do once the runtime
+pieces are wired up), not present-tense.
 
 ## Okta build configuration
 
 Okta tenant values are **not** committed to the repo. They are injected into
-the built `Info.plist` at build time by the `Inject Okta Config` Run Script
-phase on the `AcmeBank` target, reading from environment variables on the
-build machine.
+`AcmeBank/Info.plist` at build time by the `Inject Okta Config` pre-build
+script on the `AcmeBank` target, reading from environment variables on the
+build machine. Xcode then copies + variable-expands that file into the built
+app bundle, so the keys reach `Bundle.main.infoDictionary` at runtime.
+
+> ⚠️ **Security: `AcmeBank/Info.plist` is `.gitignore`d on purpose — do not
+> remove that entry.** The pre-build script overwrites this file on every
+> build, so when you build locally with the four `OKTA_*` env vars set, real
+> tenant values (client ID, issuer) end up on disk inside the working tree.
+> A stray `git add -A` or an IDE auto-stage would otherwise leak them into a
+> commit. The committed template `AcmeBank/Info.plist.example` contains only
+> sentinel placeholders and is what the pre-build script seeds the working
+> plist from on a fresh clone.
+>
+> A future PR will add a CI lint step that fails the build if a tracked
+> `*.plist` ever contains a non-sentinel `OktaIssuer` / `OktaClientId`
+> value, as a belt-and-braces safeguard. Until that lands, treat the
+> `.gitignore` entry + the `.example` template as the only line of defence
+> and review your staged diff before pushing.
 
 ### Required environment variables
 
@@ -65,13 +103,14 @@ build machine.
 | `OKTA_REDIRECT_URI`  | `com.acmebank.mobile:/callback`                  |
 | `OKTA_SCOPES`        | `openid profile email offline_access`            |
 
-When all four are set, `OktaConfig.load()` returns `.configured(...)` at
-runtime and DirectAuth runs against your real Okta tenant. When **any** is
-unset, the Run Script writes the sentinel string `__OKTA_NOT_CONFIGURED__`
-into the Info.plist for that key (it **never** fails the build), `OktaConfig`
-returns `.notConfigured(reason)`, the app launches showing the "Okta is not
-configured on this build" banner, and the XCUITest covering the sign-in flow
-is skipped via `XCTSkipUnless`.
+When all four are set, the runtime `OktaConfig.load()` (delivered in a
+follow-on PR) will return `.configured(...)` and DirectAuth will run against
+your real Okta tenant. When **any** is unset, the pre-build script writes
+the sentinel string `__OKTA_NOT_CONFIGURED__` into the Info.plist for that
+key (it **never** fails the build); once the runtime layer lands,
+`OktaConfig` will return `.notConfigured(reason)` and the app will launch
+showing the "Okta is not configured on this build" banner, and the XCUITest
+covering the sign-in flow will be skipped via `XCTSkipUnless`.
 
 ### Three ways to set the env vars
 
@@ -128,15 +167,25 @@ Xcode development only.
 
 ### CI tolerance
 
+> **Forward-looking:** the bullets below describe the *target* behaviour
+> once the runtime layer (`OktaConfig` + the "not configured" banner +
+> the `XCTSkipUnless`-guarded XCUITest) lands in a follow-on PR. In
+> *this* PR only the build-script half exists — the `xcodebuild build`
+> exit-0 + sentinel-in-plist behaviour is real today; the runtime banner
+> and the `XCTSkip` are not yet implemented.
+
 CI runs without `OKTA_*` env vars set. The expected behaviour is:
 
-- `xcodebuild build` exits **0**; the Info.plist contains four
-  `__OKTA_NOT_CONFIGURED__` sentinel strings.
-- The app launches in the simulator and displays the inline error banner
-  "Okta is not configured on this build — see README."
-- `xcodebuild test -only-testing:AcmeBankUITests` runs, and the end-to-end
-  sign-in test reports `XCTSkip` (not failure) because `OktaConfig.load()`
-  returned `.notConfigured`.
+- `xcodebuild build` exits **0**; `AcmeBank/Info.plist` contains four
+  `__OKTA_NOT_CONFIGURED__` sentinel strings. ✅ implemented in this PR.
+- The app will launch in the simulator and display the inline error banner
+  "Okta is not configured on this build — see README." ⏳ deferred to a
+  follow-on PR (requires `OktaConfig.swift` + banner view).
+- `xcodebuild test -only-testing:AcmeBankUITests` will run, and the
+  end-to-end sign-in test will report `XCTSkip` (not failure) because
+  `OktaConfig.load()` returned `.notConfigured`. ⏳ deferred to a follow-on
+  PR (requires `OktaConfig.swift` + the XCUITest source itself —
+  `AcmeBankUITests/` is currently an empty target).
 
 A CI run that goes red because env vars are missing — script `exit 1`, app
 crash on launch, XCUITest failure asserting on Okta state — is a config
