@@ -44,6 +44,13 @@ targets:
         basedOnDependencyAnalysis: false
         inputFiles:
           - ${SRCROOT}/AcmeBank/Info.plist.example
+        # Declares that this phase PRODUCES the gitignored Info.plist, so
+        # Xcode's build graph runs it before the "Process Info.plist" step.
+        # Without this, a fresh clone / CI checkout (where Info.plist does
+        # not exist yet) fails with "Build input file cannot be found:
+        # AcmeBank/Info.plist" before the seeding logic can run.
+        outputFiles:
+          - ${SRCROOT}/AcmeBank/Info.plist
         script: |
           set -u
           INFOPLIST="${SRCROOT}/AcmeBank/Info.plist"

@@ -15,7 +15,42 @@
 
       DO NOT commit real Okta tenant values into this file. Real values
       belong in env vars on the developer / CI machine, never in source.
+
+      The standard CFBundle* / UI* keys below are REQUIRED: the target sets
+      GENERATE_INFOPLIST_FILE=NO, so Xcode does NOT synthesise them — without
+      CFBundleIdentifier the built .app installs with "Missing bundle ID"
+      (IXErrorDomain Code 13). The `$(...)` values are expanded from build
+      settings at build time.
     -->
+    <key>CFBundleDevelopmentRegion</key>
+    <string>$(DEVELOPMENT_LANGUAGE)</string>
+    <key>CFBundleExecutable</key>
+    <string>$(EXECUTABLE_NAME)</string>
+    <key>CFBundleIdentifier</key>
+    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>$(PRODUCT_NAME)</string>
+    <key>CFBundlePackageType</key>
+    <string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSRequiresIPhoneOS</key>
+    <true/>
+    <key>UILaunchScreen</key>
+    <dict/>
+    <key>UIApplicationSceneManifest</key>
+    <dict>
+        <key>UIApplicationSupportsMultipleScenes</key>
+        <false/>
+    </dict>
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+    </array>
     <key>OktaIssuer</key>
     <string>__OKTA_NOT_CONFIGURED__</string>
     <key>OktaClientId</key>
