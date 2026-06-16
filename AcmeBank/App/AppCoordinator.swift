@@ -109,7 +109,17 @@ final class AppCoordinator: ObservableObject {
     /// Drops the session and returns to `.signedOut`. Token cleanup
     /// belongs to the keychain layer (future PR); this is the
     /// pure-state transition.
+    ///
+    /// Also resets `loginViewModel` form state so the next user on a
+    /// shared device does NOT see the previous session's username,
+    /// password, "Keep me signed in" choice, or stale error banner
+    /// pre-filled in the form. We reset BEFORE flipping `state` so
+    /// the `LoginView` re-presents with a clean form.
     func signOut() {
+        loginViewModel.username      = ""
+        loginViewModel.password      = ""
+        loginViewModel.keepSignedIn  = false
+        loginViewModel.errorMessage  = nil
         state = .signedOut
     }
 }

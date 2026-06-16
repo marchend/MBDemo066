@@ -181,4 +181,32 @@ final class AppCoordinatorTests: XCTestCase {
         coord.signOut()
         XCTAssertEqual(coord.state, .signedOut)
     }
+
+    /// On a shared device, the next user must NOT see the previous
+    /// session's form values pre-filled when `LoginView` re-presents.
+    /// `signOut()` is responsible for clearing the form fields and
+    /// any stale error banner.
+    func test_signOut_clearsLoginFormFields() async {
+        let stub = StubAuthService(outcome: .success(makeSession()))
+        let coord = makeCoordinator(authService: stub)
+
+        // Seed the form with a previous session's values + a stale banner.
+        coord.loginViewModel.username     = "alice@example.com"
+        coord.loginViewModel.password     = "hunter2"
+        coord.loginViewModel.keepSignedIn = true
+        coord.loginViewModel.errorMessage = "stale banner from a prior attempt"
+
+        await coord.handleSignIn(username: "u", password: "p", keepSignedIn: true)
+
+        coord.signOut()
+
+        XCTAssertEqual(coord.loginViewModel.username, "",
+                       "signOut must clear the username so the next user doesn't see prior PII")
+        XCTAssertEqual(coord.loginViewModel.password, "",
+                       "signOut must clear the password field")
+        XCTAssertFalse(coord.loginViewModel.keepSignedIn,
+                       "signOut must reset the 'Keep me signed in' choice")
+        XCTAssertNil(coord.loginViewModel.errorMessage,
+                     "signOut must clear any stale error banner")
+    }
 }

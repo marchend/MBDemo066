@@ -1,15 +1,19 @@
 import XCTest
-@testable import AcmeBank
 
 /// End-to-end XCUITest for the username+password sign-in flow.
 ///
 /// Skip-gated TWICE so CI runs stay green when no Okta env is wired:
 ///
-/// 1. `OktaConfig.load().isConfigured` — the Expert Reference
-///    `XCTSkipUnless` pattern. When the build script wrote the
-///    `__OKTA_NOT_CONFIGURED__` sentinel into `Info.plist`, there is
-///    no real tenant to talk to and the test reports `XCTSkip`,
-///    NOT a failure.
+/// 1. `OKTA_ISSUER` env var — the env vars are propagated to the UI
+///    test runner process by the Xcode scheme. We CANNOT read the
+///    app's `Info.plist` from here: in a XCUITest process,
+///    `Bundle.main` is the UI test runner bundle
+///    (`AcmeBankUITests.xctest`), NOT `AcmeBank.app`, and the Okta
+///    plist keys are only injected into the app bundle's
+///    `Info.plist`. So `OktaConfig.load()` would always report
+///    `.notConfigured` here and Gate 1 would always skip, even on
+///    a correctly-configured CI runner. The env-var check is the
+///    correct proxy for "this build was wired with a real tenant".
 ///
 /// 2. `OKTA_TEST_USERNAME` / `OKTA_TEST_PASSWORD` env vars — even
 ///    with a real tenant we can't drive the flow without test
@@ -22,14 +26,17 @@ final class LoginFlowUITests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
 
-        // Gate 1: Okta configured at build time?
+        let env = ProcessInfo.processInfo.environment
+
+        // Gate 1: Okta configured at build time? Proxy via the env
+        // var the build script also consumes — see doc comment above
+        // for why we can't read the app bundle's Info.plist here.
         try XCTSkipUnless(
-            OktaConfig.load().isConfigured,
-            "Okta not configured — skipping end-to-end sign-in test"
+            env["OKTA_ISSUER"]?.isEmpty == false,
+            "OKTA_ISSUER not set — skipping end-to-end sign-in test"
         )
 
         // Gate 2: test credentials in the environment?
-        let env = ProcessInfo.processInfo.environment
         try XCTSkipUnless(
             env["OKTA_TEST_USERNAME"]?.isEmpty == false &&
             env["OKTA_TEST_PASSWORD"]?.isEmpty == false,
@@ -47,7 +54,7 @@ final class LoginFlowUITests: XCTestCase {
         let app = XCUIApplication()
         app.launch()
 
-        // ── Drive the login form ────────────────────────────────────────────────
+        // ── Drive the login form ───────────────────────────────────────────
         let usernameField = app.textFields["usernameField"]
         XCTAssertTrue(
             usernameField.waitForExistence(timeout: 10),
@@ -75,12 +82,12 @@ final class LoginFlowUITests: XCTestCase {
             app.textFields.element(boundBy: 1).typeText(password)
         }
 
-        // ── Tap Sign In ─────────────────────────────────────────────────────────
+        // ── Tap Sign In ────────────────────────────────────────────────────
         let signInButton = app.buttons["signInButton"]
         XCTAssertTrue(signInButton.exists)
         signInButton.tap()
 
-        // ── Wait for the Welcome label on the LandingView ───────────────────────
+        // ── Wait for the Welcome label on the LandingView ─────────────────
         let welcome = app.staticTexts["welcomeLabel"]
         XCTAssertTrue(
             welcome.waitForExistence(timeout: 30),
