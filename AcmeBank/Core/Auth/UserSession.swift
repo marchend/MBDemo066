@@ -9,10 +9,29 @@ import UIKit
 /// the access token is passed in alongside so the upstream networking
 /// layer can attach it to authenticated requests.
 ///
-/// `Codable` is provided so a higher-level cache (the future `AuthState`
-/// store) can persist a session snapshot if it chooses to. This type
-/// itself does NOT touch the Keychain — token persistence is the
-/// `KeychainStore`'s responsibility.
+/// ## `Codable` conformance — scope and intent
+///
+/// `Codable` is provided so an in-process consumer (e.g. an `AuthState`
+/// store) can round-trip a session value through `JSONEncoder`/`Decoder`
+/// when it needs to. This conformance is **intentionally NOT a
+/// persistence format** — do NOT archive `UserSession` to
+/// `UserDefaults`, a plain file on disk, an analytics payload, or a
+/// crash-reporter breadcrumb. Token persistence belongs to
+/// `KeychainStore`; the keychain is the system of record.
+///
+/// Two fields are deliberately excluded from the encoded form so that
+/// a well-meaning future caller who *does* serialise this struct
+/// can't accidentally leak them:
+///
+///   - `accessToken` — already held in the keychain; never let it out
+///     of the keychain via a JSON payload.
+///   - `deviceName`  — sourced from `UIDevice.current.name`, which
+///     users routinely set to their real name (PII).
+///
+/// Both fields decode back as empty strings on a `Codable` round-trip;
+/// callers that need them must read them from the live `UserSession`
+/// instance (or, for `accessToken`, the keychain) rather than from a
+/// re-hydrated snapshot.
 public struct UserSession: Codable, Equatable {
 
     public let userId:         String
@@ -104,6 +123,43 @@ public struct UserSession: Codable, Equatable {
             authTimestamp: timestamp,
             deviceName:    Self.currentDeviceName()
         )
+    }
+
+    // MARK: - Codable (explicit, non-leaking form)
+
+    /// Encoded keys. `accessToken` and `deviceName` are intentionally
+    /// absent — see the type-level doc comment for the rationale
+    /// (token belongs in the keychain; device name is PII).
+    private enum CodingKeys: String, CodingKey {
+        case userId
+        case displayName
+        case email
+        case authTimestamp
+    }
+
+    /// Decodes a `UserSession` from the reduced key set. `accessToken`
+    /// and `deviceName` are not part of the encoded form, so they
+    /// rehydrate as empty strings; callers that need either must read
+    /// them from the live keychain / device rather than the snapshot.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.userId        = try c.decode(String.self, forKey: .userId)
+        self.displayName   = try c.decode(String.self, forKey: .displayName)
+        self.email         = try c.decode(String.self, forKey: .email)
+        self.authTimestamp = try c.decode(Date.self,   forKey: .authTimestamp)
+        self.accessToken   = ""
+        self.deviceName    = ""
+    }
+
+    /// Encodes only the non-sensitive identity fields. The access
+    /// token and device name are deliberately omitted so a future
+    /// caller can't accidentally leak them via a JSON payload.
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(userId,        forKey: .userId)
+        try c.encode(displayName,   forKey: .displayName)
+        try c.encode(email,         forKey: .email)
+        try c.encode(authTimestamp, forKey: .authTimestamp)
     }
 
     // MARK: - JWT decoding

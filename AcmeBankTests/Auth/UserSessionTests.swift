@@ -129,8 +129,16 @@ final class UserSessionTests: XCTestCase {
     }
 
     // MARK: - Codable round-trip
+    //
+    // The `Codable` conformance is intentionally lossy: identity fields
+    // round-trip, but `accessToken` and `deviceName` are deliberately
+    // excluded from the encoded form so that a well-meaning caller who
+    // serialises a `UserSession` (to UserDefaults, a log payload, a
+    // crash breadcrumb, etc.) can't accidentally leak a live access
+    // token or the user's device name (PII). See `UserSession.swift`
+    // for the rationale and MD066-2 review comment 3422084530.
 
-    func test_codableRoundTrip_preservesEveryField() throws {
+    func test_codableRoundTrip_preservesIdentityFields() throws {
         let original = UserSession(
             userId:        "00u123abc",
             displayName:   "Alice Example",
@@ -143,6 +151,59 @@ final class UserSessionTests: XCTestCase {
         let data    = try JSONEncoder().encode(original)
         let decoded = try JSONDecoder().decode(UserSession.self, from: data)
 
-        XCTAssertEqual(decoded, original)
+        XCTAssertEqual(decoded.userId,        original.userId)
+        XCTAssertEqual(decoded.displayName,   original.displayName)
+        XCTAssertEqual(decoded.email,         original.email)
+        XCTAssertEqual(decoded.authTimestamp, original.authTimestamp)
+    }
+
+    func test_codableRoundTrip_dropsAccessToken_toPreventLeak() throws {
+        let original = UserSession(
+            userId:        "00u123abc",
+            displayName:   "Alice Example",
+            email:         "alice@example.com",
+            accessToken:   "AT-secret",
+            authTimestamp: Date(timeIntervalSince1970: 1_700_000_000),
+            deviceName:    "Alice's iPhone"
+        )
+
+        let data    = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(UserSession.self, from: data)
+
+        // The access token MUST NOT survive a `Codable` round-trip —
+        // it lives in the keychain, not in JSON snapshots.
+        XCTAssertEqual(decoded.accessToken, "")
+
+        // And just as importantly: the raw JSON payload must not
+        // contain the secret value at all.
+        let json = String(data: data, encoding: .utf8) ?? ""
+        XCTAssertFalse(json.contains("AT-secret"),
+                       "Access token leaked into encoded form: \(json)")
+        XCTAssertFalse(json.contains("accessToken"),
+                       "`accessToken` key leaked into encoded form: \(json)")
+    }
+
+    func test_codableRoundTrip_dropsDeviceName_toPreventPIILeak() throws {
+        let original = UserSession(
+            userId:        "00u123abc",
+            displayName:   "Alice Example",
+            email:         "alice@example.com",
+            accessToken:   "AT-xyz",
+            authTimestamp: Date(timeIntervalSince1970: 1_700_000_000),
+            deviceName:    "Jane Doe's iPhone"
+        )
+
+        let data    = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(UserSession.self, from: data)
+
+        // `UIDevice.current.name` is PII — users routinely set it to
+        // their real name. It MUST NOT survive a `Codable` round-trip.
+        XCTAssertEqual(decoded.deviceName, "")
+
+        let json = String(data: data, encoding: .utf8) ?? ""
+        XCTAssertFalse(json.contains("Jane Doe"),
+                       "Device-name PII leaked into encoded form: \(json)")
+        XCTAssertFalse(json.contains("deviceName"),
+                       "`deviceName` key leaked into encoded form: \(json)")
     }
 }

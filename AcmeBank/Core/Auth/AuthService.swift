@@ -40,6 +40,12 @@ public enum AuthError: Error, Equatable {
     /// Okta returned success but the response was unreadable — typically
     /// a malformed ID token. NOT a network failure; do not show the
     /// network banner for this.
+    ///
+    /// This case is also used for the operator-diagnosable
+    /// "missing ID token" sub-case (tenant not configured with the
+    /// `openid` scope, or a non-OIDC grant); the associated message
+    /// names that root cause explicitly so operators don't chase a
+    /// phantom JWT-decode bug.
     case invalidServerResponse(String)
 }
 
@@ -63,6 +69,13 @@ public enum DirectAuthStatus: Equatable {
     case network
     /// MFA challenge — this build can't continue the flow yet.
     case mfaRequired
+    /// Okta returned a success token response but with no ID token
+    /// (or an empty one). This typically means the tenant isn't
+    /// configured for the `openid` scope, or a non-OIDC grant was
+    /// issued. Surfaced as a distinct case so the mapping layer can
+    /// emit an operator-facing diagnostic that names the real root
+    /// cause instead of "the server response was unreadable".
+    case missingIdToken
 }
 
 /// One factor in the DirectAuth flow. Today only `.password` is wired;
@@ -139,11 +152,20 @@ final class LiveDirectAuthFlow: DirectAuthenticationFlowProtocol {
     /// every other continuation collapses to `.mfaRequired` so the UI
     /// shows the "MFA not yet supported" banner instead of leaving the
     /// user stuck on a spinner.
+    ///
+    /// Note on the `.success` branch: a missing or empty ID token is
+    /// routed to the dedicated `.missingIdToken` status rather than
+    /// being papered over as an empty string that downstream code
+    /// would mis-diagnose as "malformed token". See MD066-2 review
+    /// comment 3422082385.
     static func map(status: DirectAuthenticationFlow.Status) -> DirectAuthStatus {
         switch status {
         case .success(let token):
+            guard let rawIdToken = token.idToken?.rawValue, !rawIdToken.isEmpty else {
+                return .missingIdToken
+            }
             return .success(
-                idToken:      token.idToken?.rawValue ?? "",
+                idToken:      rawIdToken,
                 accessToken:  token.accessToken,
                 refreshToken: token.refreshToken
             )
@@ -235,7 +257,30 @@ public final class OktaAuthService: AuthServicing {
             throw AuthError.network
         case .mfaRequired:
             throw AuthError.mfaUnsupported
+        case .missingIdToken:
+            // Okta returned a 200 with no ID token (or an empty one).
+            // This is a tenant/config problem — typically the `openid`
+            // scope isn't granted, or a non-OIDC grant was issued.
+            // Surface it as `invalidServerResponse` (NOT network), but
+            // with a message that names the real root cause so an
+            // operator reading the diagnostic doesn't chase a phantom
+            // JWT-decode bug.
+            throw AuthError.invalidServerResponse(
+                "Sign-in succeeded but the server did not return an ID token " +
+                "— check that the Okta application grants the `openid` scope."
+            )
         case let .success(idToken, accessToken, refreshToken):
+            // Defensive belt-and-braces: if any future seam ever emits
+            // `.success` with an empty `idToken`, treat it the same as
+            // `.missingIdToken` rather than letting it collapse to a
+            // misleading "malformed token" diagnostic downstream.
+            if idToken.isEmpty {
+                throw AuthError.invalidServerResponse(
+                    "Sign-in succeeded but the server did not return an ID token " +
+                    "— check that the Okta application grants the `openid` scope."
+                )
+            }
+
             // 4. Decode the ID token into a UserSession. A decode
             //    failure is a SERVER-side bug, not a network failure
             //    — map to `.invalidServerResponse` so the UI doesn't

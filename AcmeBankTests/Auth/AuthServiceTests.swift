@@ -4,11 +4,14 @@ import XCTest
 /// Exercises `OktaAuthService.signIn(...)` against a stub DirectAuth flow
 /// and an in-memory keychain fake.
 ///
-/// The four DirectAuth status branches map to:
+/// The DirectAuth status branches map to:
 ///   .success(...)         → returns a UserSession, persists tokens
 ///   .invalidCredentials   → throws AuthError.invalidCredentials
 ///   .network              → throws AuthError.network
 ///   .mfaRequired          → throws AuthError.mfaUnsupported
+///   .missingIdToken       → throws AuthError.invalidServerResponse
+///                            (with a message that names the missing
+///                             ID token / openid-scope root cause)
 ///
 /// Plus the keepSignedIn refresh-token persistence rule:
 ///   keepSignedIn == true  → refresh token written
@@ -274,8 +277,14 @@ final class AuthServiceTests: XCTestCase {
         // call is NOT a network error. It must surface as a distinct
         // AuthError case so the UI doesn't show the "couldn't reach
         // Okta" banner for a 200 OK.
+        //
+        // We use a string with more than three dot-separated segments
+        // so `decodeClaims` hits the `segments.count == 3` guard and
+        // throws `malformedToken`. (We deliberately don't quote a
+        // specific segment count in this comment — the only invariant
+        // the test cares about is "≠ 3 segments → malformedToken".)
         let flow = StubFlow(result: .success(
-            idToken: "not.a.valid.jwt.at.all", // 6 segments — malformedToken
+            idToken: "not.a.valid.jwt.at.all",
             accessToken: "AT",
             refreshToken: nil
         ))
@@ -288,6 +297,64 @@ final class AuthServiceTests: XCTestCase {
             if case .invalidServerResponse = err {} else {
                 XCTFail("Expected .invalidServerResponse, got \(err)")
             }
+        } catch {
+            XCTFail("Unexpected error type: \(error)")
+        }
+    }
+
+    // MARK: - Missing ID token (tenant / scope misconfiguration)
+
+    func test_signIn_missingIdToken_throwsInvalidServerResponse_withScopeDiagnostic() async {
+        // Pattern-of-mistake guarded by MD066-2 review comment 3422082385:
+        // when Okta returns success WITHOUT an ID token (tenant not
+        // configured for `openid`, or non-OIDC grant), we used to pass
+        // an empty string through `UserSession.decodeClaims`, which
+        // produced a misleading "server response was unreadable"
+        // banner. The dedicated `.missingIdToken` status must instead
+        // surface as `invalidServerResponse` with an operator-facing
+        // message that names the real root cause.
+        let flow = StubFlow(result: .missingIdToken)
+        let (svc, _, _) = makeService(flow: flow)
+
+        do {
+            _ = try await svc.signIn(username: "u", password: "p", keepSignedIn: false)
+            XCTFail("Expected AuthError.invalidServerResponse for .missingIdToken")
+        } catch let err as AuthError {
+            guard case let .invalidServerResponse(message) = err else {
+                XCTFail("Expected .invalidServerResponse, got \(err)")
+                return
+            }
+            XCTAssertTrue(message.contains("openid"),
+                          "Diagnostic must name the missing scope — got: \(message)")
+            XCTAssertTrue(message.contains("ID token"),
+                          "Diagnostic must name the missing ID token — got: \(message)")
+        } catch {
+            XCTFail("Unexpected error type: \(error)")
+        }
+    }
+
+    func test_signIn_successWithEmptyIdToken_isTreatedAsMissingIdToken() async {
+        // Defensive belt-and-braces: even if a future seam emits
+        // `.success(idToken: "", ...)` instead of `.missingIdToken`,
+        // `OktaAuthService` must still surface the dedicated diagnostic
+        // rather than letting the empty string flow into `decodeClaims`.
+        let flow = StubFlow(result: .success(
+            idToken: "",
+            accessToken: "AT",
+            refreshToken: nil
+        ))
+        let (svc, _, _) = makeService(flow: flow)
+
+        do {
+            _ = try await svc.signIn(username: "u", password: "p", keepSignedIn: false)
+            XCTFail("Expected AuthError.invalidServerResponse for empty idToken")
+        } catch let err as AuthError {
+            guard case let .invalidServerResponse(message) = err else {
+                XCTFail("Expected .invalidServerResponse, got \(err)")
+                return
+            }
+            XCTAssertTrue(message.contains("openid"),
+                          "Diagnostic must name the missing scope — got: \(message)")
         } catch {
             XCTFail("Unexpected error type: \(error)")
         }
