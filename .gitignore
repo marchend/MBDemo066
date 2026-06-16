@@ -16,3 +16,10 @@ Pods/
 # Swift Package Manager
 .swiftpm/
 .build/
+
+# Okta-injected Info.plist — written by the `Inject Okta Config` pre-build
+# script from the four OKTA_* env vars on the build machine. May contain
+# real tenant values (client ID, issuer) on a developer laptop, so it must
+# NEVER be tracked. The committed template is `AcmeBank/Info.plist.example`;
+# the pre-build script seeds `AcmeBank/Info.plist` from it on a fresh clone.
+AcmeBank/Info.plist
