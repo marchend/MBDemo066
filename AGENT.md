@@ -49,11 +49,13 @@ xcodebuild test -scheme AcmeBank \
 ```
 AcmeBank/
 ├── App/
-│   ├── AcmeBankApp.swift       # @main entry point (implemented)
-│   └── ContentView.swift       # Hello World view (implemented)
+│   ├── AcmeBankApp.swift       # @main entry point — wires AppCoordinator
+│   ├── AppCoordinator.swift    # AuthState switching (signedOut ⇄ signedIn)
+│   └── ContentView.swift       # switch on coordinator.state → Login / Landing
 ├── Core/
 │   └── Auth/                   # OktaConfig, UserSession, KeychainStore, AuthService (implemented)
 ├── Features/
+│   ├── Landing/                # LandingView (post-sign-in Welcome screen)
 │   └── Login/                  # LoginView + LoginViewModel + sub-views (implemented)
 ├── Info.plist.example          # Okta plist template (implemented; working copy .gitignored)
 └── Resources/
@@ -62,10 +64,13 @@ AcmeBank/
     └── AcmeBank.entitlements   # Keychain access group stub (implemented)
 AcmeBankTests/
 ├── AcmeBankTests.swift         # Trivial smoke test (implemented)
+├── App/                        # AppCoordinator state-machine tests
 ├── Auth/                       # OktaConfig / UserSession / KeychainStore / AuthService tests (implemented)
-└── Features/Login/             # LoginView + LoginViewModel tests (implemented)
-AcmeBankUITests/                # XCUITest target (implemented as an empty target;
-                                #   the XCUITest sources land in a follow-on PR)
+└── Features/
+    ├── Landing/                # LandingView tests
+    └── Login/                  # LoginView + LoginViewModel tests (implemented)
+AcmeBankUITests/                # XCUITest target
+└── LoginFlowUITests.swift      # XCTSkipUnless-gated end-to-end sign-in flow
 project.yml                     # XcodeGen spec (implemented)
 setup.sh                        # One-shot project setup (implemented)
 ```
@@ -110,15 +115,14 @@ AcmeBankUITests/     # XCUITest — critical-flow end-to-end tests
 | `OktaConfig.swift` (runtime sentinel detection + `.load()`) | ✅ implemented in MD066-2 PR 2 |
 | `AuthService` / `OktaAuthService` (Okta DirectAuth) | ✅ implemented in MD066-2 PR 2 |
 | `KeychainStore` / `UserSession` | ✅ implemented in MD066-2 PR 2 |
-| "Okta is not configured on this build" inline banner | ⏳ deferred — follow-on PR |
-| XCUITest sources (`XCTSkipUnless` sign-in flow) | ⏳ deferred — follow-on PR |
-| `AppCoordinator` + `RootView` (auth-state switching) | ⏳ deferred — future PR |
+| `AppCoordinator` + auth-state switching + LandingView | ✅ implemented in MD066-2 PR 3 |
+| "Okta is not configured on this build" inline banner | ✅ implemented in MD066-2 PR 3 |
+| XCUITest sources (`XCTSkipUnless` sign-in flow) | ✅ implemented in MD066-2 PR 3 |
 | `APIClient` / `APIRouter` / `APIError` / `RequestInterceptor` | ⏳ deferred — future PR |
 | Domain models (Account, Transaction, Customer) | ⏳ deferred — future PR |
 | Repository protocols (`Domain/Repositories/`) | ⏳ deferred — future PR |
 | Remote repositories (`Data/Remote/`) | ⏳ deferred — future PR |
 | Mock repositories (`Data/Mock/`) | ⏳ deferred — future PR |
-| Login coordinator (wires `OktaAuthService` to `LoginView`) | ⏳ deferred — MD066-2 PR 3 |
 | Home feature (View + ViewModel + Coordinator) | ⏳ deferred — future PR |
 | Accounts / Transfer / Cards features | ⏳ deferred — future PR |
 | Design system (Colors, Typography) | ⏳ deferred — future PR |
@@ -169,6 +173,25 @@ test double.
   does `catch let e as AuthError`, so a non-`AuthError` escape produces
   a misleading "couldn't reach Okta" banner for a 200 OK.
 
+## Composition root (for feature agents)
+`AcmeBank/App/` wires the live auth flow at `@main`:
+
+- `AcmeBankApp` instantiates one `AppCoordinator` as a `@StateObject`,
+  passing it the real `OktaAuthService()`. Do NOT construct the
+  coordinator inside a `View.init` — SwiftUI re-runs view inits on every
+  parent re-render and you'd lose `state` mid-flight.
+- `AppCoordinator` (@MainActor `ObservableObject`) owns `@Published
+  state: AuthState` (`.signedOut` / `.signedIn(UserSession)`) and the
+  shared `LoginViewModel`. Its `handleSignIn(...)` toggles
+  `loginViewModel.isSigningIn`, awaits `authService.signIn(...)`,
+  transitions to `.signedIn(session)` on success or routes the
+  `AuthError` through `LoginViewModel.handleResult(_:)` on failure.
+- `ContentView` switches on `coordinator.state` — `LoginView(viewModel:
+  coordinator.loginViewModel)` for `.signedOut`, `LandingView(session:)`
+  for `.signedIn`. There is intentionally NO no-op stub fallback here;
+  re-introducing one would silently strand the real Okta wiring as
+  dead code (the MD050-2 / MD066-2 lesson).
+
 ## Okta build config (for feature agents)
 The build-time half of the Okta config is **already wired**: the four Okta
 tenant values (`OktaIssuer`, `OktaClientId`, `OktaRedirectUri`, `OktaScopes`)
@@ -185,9 +208,10 @@ The runtime half is implemented in `AcmeBank/Core/Auth/OktaConfig.swift`:
 it detects the `__OKTA_NOT_CONFIGURED__` sentinel and returns
 `.notConfigured(reason)` lazily — never `fatalError` / `preconditionFailure` /
 force-unwrap on missing config at launch, so the app boots cleanly on CI
-builds that have no `OKTA_*` env vars set. The corresponding XCUITest (still
-deferred) MUST guard the sign-in end-to-end test with
-`XCTSkipUnless(OktaConfig.load().isConfigured)` so the test reports
+builds that have no `OKTA_*` env vars set. The end-to-end XCUITest
+(`AcmeBankUITests/LoginFlowUITests.swift`) guards itself with
+`XCTSkipUnless(OktaConfig.load().isConfigured)` plus a second skip on the
+`OKTA_TEST_USERNAME` / `OKTA_TEST_PASSWORD` env vars, so the test reports
 `XCTSkip`, not failure, on a CI build without env vars.
 
 ## Git Workflow
