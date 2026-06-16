@@ -166,7 +166,7 @@ public struct UserSession: Codable, Equatable {
 
     /// Decodes the middle segment of a JWT into the `IDTokenClaims`
     /// struct. Pure / testable — no UI, no network.
-    static func decodeClaims(from idToken: String) throws -> IDTokenClaims {
+    private static func decodeClaims(from idToken: String) throws -> IDTokenClaims {
         let segments = idToken.split(separator: ".", omittingEmptySubsequences: false)
         guard segments.count == 3 else {
             throw DecodeError.malformedToken

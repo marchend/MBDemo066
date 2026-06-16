@@ -112,12 +112,15 @@ final class LiveDirectAuthFlow: DirectAuthenticationFlowProtocol {
         guard case let .configured(issuer, clientId, _, scopes) = config else {
             throw AuthError.notConfigured("Okta is not configured on this build — see README.")
         }
-        // `okta-mobile-swift` 2.x expects scopes as a space-joined
-        // string, matching the OIDC `scope` parameter format.
+        // `okta-mobile-swift` 2.x renamed the convenience initializer's
+        // labels from 1.x: `issuer:` -> `issuerURL:` and `scopes:` -> `scope:`
+        // (the `scope:` overload accepts a space-joined string, matching the
+        // OIDC `scope` parameter format). Using the 1.x labels fails to
+        // compile with "Extra argument 'issuer' in call".
         self.flow = DirectAuthenticationFlow(
-            issuer:   issuer,
-            clientId: clientId,
-            scopes:   scopes.joined(separator: " ")
+            issuerURL: issuer,
+            clientId:  clientId,
+            scope:     scopes.joined(separator: " ")
         )
     }
 
