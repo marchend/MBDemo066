@@ -17,7 +17,7 @@ public struct StubAccountsRepository: AccountsRepository {
             id:           "acct-checking-001",
             kind:         .checking,
             displayName:  "Everyday Checking",
-            maskedNumber: "\u2022\u2022\u2022\u20224281",
+            maskedNumber: "\u{2022}\u{2022}\u{2022}\u{2022}4281",
             // Mockup: $4,287.43
             balance:      Decimal(string: "4287.43")!
         ),
@@ -25,7 +25,7 @@ public struct StubAccountsRepository: AccountsRepository {
             id:           "acct-savings-001",
             kind:         .savings,
             displayName:  "High-Yield Savings",
-            maskedNumber: "\u2022\u2022\u2022\u20227735",
+            maskedNumber: "\u{2022}\u{2022}\u{2022}\u{2022}7735",
             // Mockup: $12,500.00
             balance:      Decimal(string: "12500.00")!
         ),
@@ -33,7 +33,7 @@ public struct StubAccountsRepository: AccountsRepository {
             id:           "acct-credit-001",
             kind:         .credit,
             displayName:  "Acme Rewards Visa",
-            maskedNumber: "\u2022\u2022\u2022\u20229902",
+            maskedNumber: "\u{2022}\u{2022}\u{2022}\u{2022}9902",
             // Mockup: -$842.16 (outstanding statement balance; see
             // `Account` sign convention).
             balance:      Decimal(string: "-842.16")!

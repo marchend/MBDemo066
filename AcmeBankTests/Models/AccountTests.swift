@@ -11,14 +11,14 @@ final class AccountTests: XCTestCase {
             id:           "acct-1",
             kind:         .checking,
             displayName:  "Everyday Checking",
-            maskedNumber: "\u2022\u2022\u2022\u20221234",
+            maskedNumber: "\u{2022}\u{2022}\u{2022}\u{2022}1234",
             balance:      Decimal(string: "100.00")!
         )
         let b = Account(
             id:           "acct-1",
             kind:         .checking,
             displayName:  "Everyday Checking",
-            maskedNumber: "\u2022\u2022\u2022\u20221234",
+            maskedNumber: "\u{2022}\u{2022}\u{2022}\u{2022}1234",
             balance:      Decimal(string: "100.00")!
         )
         XCTAssertEqual(a, b)
@@ -29,7 +29,7 @@ final class AccountTests: XCTestCase {
             id:           "acct-1",
             kind:         .checking,
             displayName:  "Everyday Checking",
-            maskedNumber: "\u2022\u2022\u2022\u20221234",
+            maskedNumber: "\u{2022}\u{2022}\u{2022}\u{2022}1234",
             balance:      Decimal(string: "100.00")!
         )
 
@@ -51,7 +51,7 @@ final class AccountTests: XCTestCase {
         XCTAssertNotEqual(base, Account(id: base.id,
                                         kind: base.kind,
                                         displayName: base.displayName,
-                                        maskedNumber: "\u2022\u2022\u2022\u20229999",
+                                        maskedNumber: "\u{2022}\u{2022}\u{2022}\u{2022}9999",
                                         balance: base.balance))
         XCTAssertNotEqual(base, Account(id: base.id,
                                         kind: base.kind,
@@ -62,7 +62,7 @@ final class AccountTests: XCTestCase {
 
     func test_account_isHashable_sameValueHashesEqually() {
         let a = Account(id: "acct-1", kind: .savings, displayName: "S",
-                        maskedNumber: "\u2022\u2022\u2022\u20220001",
+                        maskedNumber: "\u{2022}\u{2022}\u{2022}\u{2022}0001",
                         balance: Decimal(string: "1.23")!)
         let b = a
         XCTAssertEqual(a.hashValue, b.hashValue)
@@ -94,7 +94,7 @@ final class AccountTests: XCTestCase {
             id:           "acct-credit-001",
             kind:         .credit,
             displayName:  "Acme Rewards Visa",
-            maskedNumber: "\u2022\u2022\u2022\u20229902",
+            maskedNumber: "\u{2022}\u{2022}\u{2022}\u{2022}9902",
             balance:      Decimal(string: "-842.16")!
         )
 
