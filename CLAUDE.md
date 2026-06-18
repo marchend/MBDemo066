@@ -51,25 +51,30 @@ AcmeBank/
 ├── App/
 │   ├── AcmeBankApp.swift       # @main entry point — wires AppCoordinator
 │   ├── AppCoordinator.swift    # AuthState switching (signedOut ⇄ signedIn)
-│   └── ContentView.swift       # switch on coordinator.state → Login / Landing
+│   ├── RootCoordinator.swift   # AuthState → root view builder (Login / HomeDashboard)
+│   └── ContentView.swift       # delegates to RootCoordinator.view(for:)
 ├── Core/
-│   └── Auth/                   # OktaConfig, UserSession, KeychainStore, AuthService (implemented)
+│   └── Auth/                   # OktaConfig, UserSession, SignedInUser, KeychainStore, AuthService (implemented)
 ├── Features/
-│   ├── Landing/                # LandingView (post-sign-in Welcome screen)
+│   ├── Home/                   # HomeDashboardView + ViewModel + PlaceholderDestinationView (signed-in root)
+│   ├── Landing/                # LandingView (retained; no longer in the composition root)
 │   └── Login/                  # LoginView + LoginViewModel + sub-views (implemented)
 ├── Info.plist.example          # Okta plist template (implemented; working copy .gitignored)
 └── Resources/
+    ├── AGENT.md / CLAUDE.md    # Per-module agent notes (identical pair)
     ├── Assets.xcassets/        # AppIcon stub (implemented)
     ├── PrivacyInfo.xcprivacy   # Privacy manifest (implemented)
     └── AcmeBank.entitlements   # Keychain access group stub (implemented)
 AcmeBankTests/
 ├── AcmeBankTests.swift         # Trivial smoke test (implemented)
-├── App/                        # AppCoordinator state-machine tests
+├── App/                        # AppCoordinator + RootCoordinator tests
 ├── Auth/                       # OktaConfig / UserSession / KeychainStore / AuthService tests (implemented)
 └── Features/
+    ├── Home/                   # HomeDashboard tests
     ├── Landing/                # LandingView tests
     └── Login/                  # LoginView + LoginViewModel tests (implemented)
 AcmeBankUITests/                # XCUITest target
+├── HomeDashboardUITests.swift  # `-uiTestSignedIn`-gated dashboard launch test
 └── LoginFlowUITests.swift      # XCTSkipUnless-gated end-to-end sign-in flow
 project.yml                     # XcodeGen spec (implemented)
 setup.sh                        # One-shot project setup (implemented)
@@ -118,12 +123,13 @@ AcmeBankUITests/     # XCUITest — critical-flow end-to-end tests
 | `AppCoordinator` + auth-state switching + LandingView | ✅ implemented in MD066-2 PR 3 |
 | "Okta is not configured on this build" inline banner | ✅ implemented in MD066-2 PR 3 |
 | XCUITest sources (`XCTSkipUnless` sign-in flow) | ✅ implemented in MD066-2 PR 3 |
+| Home dashboard (View + ViewModel + sub-views) | ✅ implemented in MD066-8 PR 1–3 |
+| `RootCoordinator` + HomeDashboard wired as signed-in root | ✅ implemented in MD066-8 PR 4 |
 | `APIClient` / `APIRouter` / `APIError` / `RequestInterceptor` | ⏳ deferred — future PR |
 | Domain models (Account, Transaction, Customer) | ⏳ deferred — future PR |
 | Repository protocols (`Domain/Repositories/`) | ⏳ deferred — future PR |
 | Remote repositories (`Data/Remote/`) | ⏳ deferred — future PR |
 | Mock repositories (`Data/Mock/`) | ⏳ deferred — future PR |
-| Home feature (View + ViewModel + Coordinator) | ⏳ deferred — future PR |
 | Accounts / Transfer / Cards features | ⏳ deferred — future PR |
 | Design system (Colors, Typography) | ⏳ deferred — future PR |
 | `AppNotification` / `NotificationPublisher` | ⏳ deferred — future PR |
@@ -160,6 +166,10 @@ test double.
 - `UserSession` decodes the OIDC ID-token claims (`sub` / `name` / `email` /
   `auth_time`) and pairs them with the access token. Throws a typed
   `DecodeError` on structural failures.
+- `SignedInUser` is the first-name-shaped projection of `UserSession` that
+  feature view-models consume (notably `HomeDashboardViewModel`). The
+  composition root (`RootCoordinator`) does the `UserSession → SignedInUser`
+  projection so feature code never sees the access token.
 - `KeychainStore` (protocol `KeychainStoring`, prod impl `SystemKeychainStore`)
   persists tokens with `kSecUseDataProtectionKeychain: true` on every query.
 - `AuthService` (protocol `AuthServicing`, prod impl `OktaAuthService`)
@@ -179,18 +189,30 @@ test double.
 - `AcmeBankApp` instantiates one `AppCoordinator` as a `@StateObject`,
   passing it the real `OktaAuthService()`. Do NOT construct the
   coordinator inside a `View.init` — SwiftUI re-runs view inits on every
-  parent re-render and you'd lose `state` mid-flight.
+  parent re-render and you'd lose `state` mid-flight. The `@main` also
+  honours the `-uiTestSignedIn` launch arg so `HomeDashboardUITests` can
+  land on the dashboard without driving the Okta flow.
 - `AppCoordinator` (@MainActor `ObservableObject`) owns `@Published
   state: AuthState` (`.signedOut` / `.signedIn(UserSession)`) and the
   shared `LoginViewModel`. Its `handleSignIn(...)` toggles
   `loginViewModel.isSigningIn`, awaits `authService.signIn(...)`,
   transitions to `.signedIn(session)` on success or routes the
   `AuthError` through `LoginViewModel.handleResult(_:)` on failure.
-- `ContentView` switches on `coordinator.state` — `LoginView(viewModel:
-  coordinator.loginViewModel)` for `.signedOut`, `LandingView(session:)`
-  for `.signedIn`. There is intentionally NO no-op stub fallback here;
-  re-introducing one would silently strand the real Okta wiring as
-  dead code (the MD050-2 / MD066-2 lesson).
+- `RootCoordinator` is the single seam that maps `AuthState` to a root
+  view: `.signedOut → LoginView`, `.signedIn(session) → HomeDashboardView`
+  wired to a fresh `HomeDashboardViewModel(repository:
+  StubAccountsRepository(), user: SignedInUser(session:))`. When you add
+  a new top-level destination, extend `RootCoordinator.Destination` and
+  its `view(for:)` builder rather than adding a second switch in
+  `ContentView`.
+- `ContentView` is now a one-liner that calls
+  `RootCoordinator.view(for: coordinator)`. There is intentionally NO
+  no-op stub fallback here; re-introducing one would silently strand
+  the real Okta wiring as dead code (the MD050-2 / MD066-2 lesson).
+- `Features/Home/` hosts the dashboard module; `HomeDashboardView` owns
+  its own `NavigationStack` (so `.navigationDestination(for:
+  QuickAction.DestinationTag.self)` resolves), so `RootCoordinator`
+  deliberately does NOT wrap it in an outer `NavigationStack`.
 
 ## Okta build config (for feature agents)
 The build-time half of the Okta config is **already wired**: the four Okta

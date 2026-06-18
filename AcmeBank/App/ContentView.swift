@@ -2,27 +2,34 @@ import SwiftUI
 
 /// Composition root for the authenticated app shell.
 ///
-/// Switches the visible screen on `AppCoordinator.state`:
-///   - `.signedOut`        → `LoginView` (shares the coordinator's
+/// Delegates the "which screen?" decision to `RootCoordinator`:
+///   - `.signedOut`         \u2192 `LoginView` (shares the coordinator's
 ///     `LoginViewModel`, so `errorMessage` / `isSigningIn` mutations
 ///     land on the on-screen form).
-///   - `.signedIn(session)`→ `LandingView(session:)`.
+///   - `.signedIn(session)` \u2192 `HomeDashboardView` wired to a fresh
+///     `HomeDashboardViewModel(repository: StubAccountsRepository(),
+///     user: SignedInUser(session:))`.
 ///
 /// There is intentionally NO no-op `LoginView(onSignIn: { _, _, _ in })`
-/// fallback here — the real Okta wiring runs through the injected
+/// fallback here \u2014 the real Okta wiring runs through the injected
 /// `AuthServicing`, and a stub closure would silently re-introduce the
 /// dead-code path the prior MD050-2 review flagged.
+///
+/// **PR 4 change.** The signed-in branch previously presented
+/// `LandingView(session:)`. It now presents `HomeDashboardView` via
+/// `RootCoordinator.view(for:)`, so the dashboard is the screen the
+/// app actually shows on launch when a user is signed in. The
+/// `LandingView` file is retained for now (covered by its own tests)
+/// but is no longer in the composition root.
 struct ContentView: View {
 
     @ObservedObject var coordinator: AppCoordinator
 
     var body: some View {
-        switch coordinator.state {
-        case .signedOut:
-            LoginView(viewModel: coordinator.loginViewModel)
-        case .signedIn(let session):
-            LandingView(session: session)
-        }
+        // SwiftUI re-evaluates this body whenever `coordinator.state`
+        // (a `@Published`) changes, so the switch inside
+        // `RootCoordinator.view(for:)` re-runs on every transition.
+        RootCoordinator.view(for: coordinator)
     }
 }
 

@@ -19,10 +19,10 @@ import SwiftUI
 /// ## Navigation
 /// `HomeDashboardView` owns the `NavigationStack` and registers a
 /// single `.navigationDestination(for: QuickAction.DestinationTag.self)`
-/// resolver. PR 4 replaces the inline `_QuickActionPlaceholderView`
-/// here with a real `PlaceholderDestinationView` shipped from its own
-/// file; until then, the inline view keeps the screen self-contained
-/// and compiling.
+/// resolver. The resolver hands every tag (other than `.more`, which
+/// `QuickActionsRow` renders as an inert button so no value is ever
+/// pushed) to `PlaceholderDestinationView` \u2014 the dashboard mockup
+/// reuses one "Coming soon" screen for Transfer / Pay Bills / Deposit.
 struct HomeDashboardView: View {
 
     @ObservedObject var viewModel: HomeDashboardViewModel
@@ -40,10 +40,10 @@ struct HomeDashboardView: View {
                             firstName:  viewModel.greetingFirstName
                         )
 
-                        // ── Account carousel ───────────────────────
+                        // ── Account carousel ────────────────────────
                         AccountCardCarousel(accounts: viewModel.accounts)
 
-                        // ── Inline error banner ────────────────────
+                        // ── Inline error banner ─────────────────────
                         // `InlineErrorBannerView` already renders
                         // nothing when `message` is nil — pass the
                         // optional through directly to match the
@@ -52,7 +52,7 @@ struct HomeDashboardView: View {
                         InlineErrorBannerView(message: viewModel.errorMessage)
                             .padding(.horizontal, 20)
 
-                        // ── Quick actions ──────────────────────────
+                        // ── Quick actions ───────────────────────────
                         QuickActionsRow()
 
                         Spacer(minLength: 24)
@@ -74,47 +74,37 @@ struct HomeDashboardView: View {
                 }
             }
             // Single destination resolver for every QuickAction push.
-            // PR 4 swaps `_QuickActionPlaceholderView` for the real
-            // `PlaceholderDestinationView` — the row itself does not
-            // need to change.
+            // `.more` is rendered as an inert Button by
+            // `QuickActionsRow` (no NavigationLink value emitted), so
+            // this resolver only ever fires for Transfer / Pay Bills
+            // / Deposit \u2014 each maps to the shared
+            // `PlaceholderDestinationView` until the real feature
+            // screens ship.
             .navigationDestination(for: QuickAction.DestinationTag.self) { tag in
-                _QuickActionPlaceholderView(tag: tag)
+                PlaceholderDestinationView(
+                    title: Self.placeholderTitle(for: tag),
+                    accessibilityTag: tag.rawValue
+                )
             }
             .task {
                 await viewModel.load()
             }
         }
     }
-}
 
-// MARK: - Placeholder destination (replaced in PR 4)
-
-/// Minimal stand-in for the real placeholder destination that PR 4
-/// ships. Kept fileprivate (and underscore-prefixed) so a future
-/// agent / reviewer doesn't mistake it for a stable API: PR 4 will
-/// delete this view and register the real `PlaceholderDestinationView`
-/// in the `.navigationDestination(for:)` resolver above.
-private struct _QuickActionPlaceholderView: View {
-    let tag: QuickAction.DestinationTag
-
-    var body: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "hammer")
-                .font(.system(size: 48))
-                .foregroundStyle(Color.acmeNavy)
-
-            Text(tag.rawValue.capitalized)
-                .font(.title2)
-                .fontWeight(.semibold)
-
-            Text("Coming soon.")
-                .font(.body)
-                .foregroundStyle(Color.secondary)
+    /// Human-readable title shown on the placeholder for a given
+    /// quick-action tag. Kept alongside the resolver so the
+    /// raw-enum-case to "Pay Bills" / "Deposit" / "Transfer" mapping
+    /// lives in one place. `.more` is included for completeness even
+    /// though `QuickActionsRow` never pushes it \u2014 a future PR that
+    /// wires More to a real destination will replace the case here.
+    static func placeholderTitle(for tag: QuickAction.DestinationTag) -> String {
+        switch tag {
+        case .transfer: return "Transfer"
+        case .payBills: return "Pay Bills"
+        case .deposit:  return "Deposit"
+        case .more:     return "More"
         }
-        .padding()
-        .navigationTitle(tag.rawValue.capitalized)
-        .navigationBarTitleDisplayMode(.inline)
-        .accessibilityIdentifier("quickAction.placeholder.\(tag.rawValue)")
     }
 }
 
