@@ -2,7 +2,8 @@ import Foundation
 import SwiftUI
 
 /// Top-level authentication state. The `ContentView` switches over
-/// this to decide whether to present `LoginView` or `LandingView`.
+/// this to decide whether to present `LoginView` or `HomeDashboardView`
+/// (per PR 4 \u2014 was `LandingView` prior to MD066-39).
 enum AuthState: Equatable {
     case signedOut
     case signedIn(UserSession)
@@ -14,7 +15,7 @@ enum AuthState: Equatable {
 /// (the same instance the `LoginView` renders against, so error copy
 /// shows up on the actual on-screen form).
 ///
-/// All state mutations happen on the main actor — the `@Published`
+/// All state mutations happen on the main actor \u2014 the `@Published`
 /// `state` drives a SwiftUI `switch`, and SwiftUI only observes
 /// mutations on the main actor.
 @MainActor
@@ -122,11 +123,29 @@ final class AppCoordinator: ObservableObject {
         loginViewModel.errorMessage  = nil
         state = .signedOut
     }
+
+    // MARK: - XCUITest hook
+
+    /// Pre-seeds the coordinator's `state` to `.signedIn(session)`
+    /// without driving the real Okta sign-in flow. Used **only** by
+    /// `AcmeBankApp.makeCoordinator()` when the `-uiTestSignedIn`
+    /// launch argument is present, so the `HomeDashboardUITests`
+    /// XCUITest can land directly on the dashboard.
+    ///
+    /// Not behind a `#if DEBUG` because XCUITests run against the
+    /// release-configured app bundle; gating this on `DEBUG` would
+    /// silently strand the test path on a Release-config CI build.
+    /// The method is `internal` (no `public`), so the only callers
+    /// are inside the `AcmeBank` module \u2014 specifically the
+    /// composition root.
+    func applyTestSignedInState(session: UserSession) {
+        state = .signedIn(session)
+    }
 }
 
 /// Tiny class-bound holder so we can bind `LoginViewModel.onSignIn` to
 /// a method on `self` from an `init` (where `self` isn't usable yet).
-/// Private to this file — not part of any public API.
+/// Private to this file \u2014 not part of any public API.
 private final class ClosureHolder {
     var closure: ((String, String, Bool) -> Void)?
 }
