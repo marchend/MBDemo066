@@ -35,9 +35,22 @@ final class HomeDashboardViewModelTests: XCTestCase {
 
     // MARK: - Fake repositories
 
-    /// Returns a canned list of accounts. Records call count so the
-    /// "load() actually called the repo" assertion is explicit.
-    private final class SuccessRepo: AccountsRepository {
+    /// Wraps a canned account list into a `HomeDashboard` (with an
+    /// empty customer + no transactions) so the ViewModel's
+    /// `fetchHome()` path is exercised while the existing
+    /// account-focused assertions keep working.
+    private static func dashboard(accounts: [Account]) -> HomeDashboard {
+        HomeDashboard(
+            customer: Customer(id: "cust-test", firstName: "Demo",
+                               lastName: "Person", phoneNumber: "+1-555-0100"),
+            accounts: accounts,
+            recentTransactions: []
+        )
+    }
+
+    /// Returns a canned dashboard. Records call count so the "load()
+    /// actually called the repo" assertion is explicit.
+    private final class SuccessRepo: HomeRepositoryProtocol {
         let accounts: [Account]
         private(set) var fetchCount = 0
 
@@ -45,22 +58,30 @@ final class HomeDashboardViewModelTests: XCTestCase {
             self.accounts = accounts
         }
 
-        func fetchAccounts() async throws -> [Account] {
+        func fetchHome() async throws -> HomeDashboard {
             fetchCount += 1
-            return accounts
+            return HomeDashboardViewModelTests.dashboard(accounts: accounts)
         }
     }
 
     /// Throws a fixed error on every call. The ViewModel never reads
-    /// the error's payload (it surfaces a generic copy string), so
-    /// any `Error` is sufficient.
-    private final class FailingRepo: AccountsRepository {
+    /// the error's payload for the generic case, so any `Error` is
+    /// sufficient.
+    private final class FailingRepo: HomeRepositoryProtocol {
         struct Boom: Error {}
         private(set) var fetchCount = 0
 
-        func fetchAccounts() async throws -> [Account] {
+        func fetchHome() async throws -> HomeDashboard {
             fetchCount += 1
             throw Boom()
+        }
+    }
+
+    /// Throws the typed `unauthorized` (401) error so the
+    /// session-expiry branch is exercised.
+    private final class UnauthorizedRepo: HomeRepositoryProtocol {
+        func fetchHome() async throws -> HomeDashboard {
+            throw BFFHomeRepository.RepositoryError.unauthorized
         }
     }
 
@@ -179,6 +200,23 @@ final class HomeDashboardViewModelTests: XCTestCase {
 
     // MARK: - load() — failure
 
+    func test_load_unauthorized_setsSessionExpired_notErrorMessage() async {
+        let repo = UnauthorizedRepo()
+        let vm = HomeDashboardViewModel(
+            repository: repo,
+            user:       demoUser,
+            now:        { self.fixedDate }
+        )
+
+        await vm.load()
+
+        XCTAssertTrue(vm.sessionExpired,
+                      "A 401/unauthorized must flip sessionExpired so the view routes to login.")
+        XCTAssertNil(vm.errorMessage,
+                     "A 401 routes to login rather than showing the generic retry banner.")
+        XCTAssertFalse(vm.isLoading)
+    }
+
     func test_load_failure_setsErrorMessage_andClearsLoading() async {
         let repo = FailingRepo()
         let vm = HomeDashboardViewModel(
@@ -285,7 +323,7 @@ final class HomeDashboardViewModelTests: XCTestCase {
 /// Returns canned responses in order. After the sequence is
 /// exhausted, repeats the last entry. Used by
 /// `test_load_failure_leavesPreviouslyLoadedAccountsUnchanged`.
-private final class FlakeyRepo: AccountsRepository {
+private final class FlakeyRepo: HomeRepositoryProtocol {
     enum Response {
         case success([Account])
         case failure
@@ -299,20 +337,25 @@ private final class FlakeyRepo: AccountsRepository {
         self.sequence = sequence
     }
 
-    func fetchAccounts() async throws -> [Account] {
+    func fetchHome() async throws -> HomeDashboard {
         let next = sequence.count > 1 ? sequence.removeFirst() : sequence.first!
         switch next {
         case .success(let accounts):
-            return accounts
+            return HomeDashboard(
+                customer: Customer(id: "cust-test", firstName: "Demo",
+                                   lastName: "Person", phoneNumber: ""),
+                accounts: accounts,
+                recentTransactions: []
+            )
         case .failure:
             throw Boom()
         }
     }
 }
 
-/// Suspends in `fetchAccounts` until the gate is opened, so a test
-/// can inspect mid-flight `isLoading == true`.
-private final class GatedRepo: AccountsRepository {
+/// Suspends in `fetchHome` until the gate is opened, so a test can
+/// inspect mid-flight `isLoading == true`.
+private final class GatedRepo: HomeRepositoryProtocol {
     let gate: AsyncGate
     let accounts: [Account]
 
@@ -321,9 +364,14 @@ private final class GatedRepo: AccountsRepository {
         self.accounts = accounts
     }
 
-    func fetchAccounts() async throws -> [Account] {
+    func fetchHome() async throws -> HomeDashboard {
         await gate.wait()
-        return accounts
+        return HomeDashboard(
+            customer: Customer(id: "cust-test", firstName: "Demo",
+                               lastName: "Person", phoneNumber: ""),
+            accounts: accounts,
+            recentTransactions: []
+        )
     }
 }
 

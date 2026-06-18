@@ -69,4 +69,50 @@ public enum CurrencyFormatter {
         defer { lock.unlock() }
         return shared.string(from: ns) ?? "$0.00"
     }
+
+    // MARK: - Per-currency-code rendering
+
+    /// Cache of formatters keyed on currency code, built lazily on
+    /// first use. Guarded by `lock` alongside the shared formatter —
+    /// `NumberFormatter` is not thread-safe, so both the cache and the
+    /// formatters it holds are only touched inside the lock.
+    private static var byCode: [String: NumberFormatter] = [:]
+
+    /// Renders a `Decimal` as a currency string for the given ISO-4217
+    /// `currencyCode` (e.g. `"USD"`, `"CAD"`). Negatives render with a
+    /// leading minus to match the dashboard rows.
+    ///
+    /// Falls back to the en_US `"USD"` rendering when `currencyCode` is
+    /// blank or unrecognised, so a contract drift never produces an
+    /// empty/`nil` string.
+    public static func string(from amount: Decimal, currencyCode: String) -> String {
+        let code = currencyCode.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard !code.isEmpty, code != "USD" else {
+            return string(from: amount)
+        }
+
+        let ns = NSDecimalNumber(decimal: amount)
+        lock.lock()
+        defer { lock.unlock() }
+
+        let formatter: NumberFormatter
+        if let cached = byCode[code] {
+            formatter = cached
+        } else {
+            let f = NumberFormatter()
+            f.numberStyle           = .currency
+            f.currencyCode          = code
+            f.locale                = Locale(identifier: "en_US")
+            f.minimumFractionDigits = 2
+            f.maximumFractionDigits = 2
+            byCode[code] = f
+            formatter = f
+        }
+        // Use the shared USD formatter (already inside the lock) as the
+        // defensive fallback rather than re-entering `string(from:)`,
+        // which would deadlock on the non-reentrant `lock`.
+        return formatter.string(from: ns)
+            ?? shared.string(from: ns)
+            ?? "0.00"
+    }
 }

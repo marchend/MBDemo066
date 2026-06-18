@@ -42,18 +42,39 @@ public struct Account: Equatable, Hashable, Codable, Identifiable {
     /// See type-level doc for the sign convention.
     public let balance: Decimal
 
+    /// The spendable / available balance the BFF reports alongside
+    /// `balance`. For deposit products this is typically equal to
+    /// `balance`; for a credit card it is the remaining credit
+    /// available to spend (the dashboard renders it as
+    /// "{available} available" on the credit row). Defaults to the
+    /// `balance` value so existing call sites that don't model it
+    /// (fixtures, tests) keep compiling unchanged.
+    public let availableBalance: Decimal
+
+    /// ISO-4217 currency code for `balance` / `availableBalance`,
+    /// e.g. `"USD"`. The dashboard renders it as a gray subtext under
+    /// the balance and keys its `NumberFormatter` on it. Defaults to
+    /// `"USD"` so existing call sites keep compiling unchanged.
+    public let currencyCode: String
+
     public init(
         id: String,
         kind: AccountKind,
         displayName: String,
         maskedNumber: String,
-        balance: Decimal
+        balance: Decimal,
+        availableBalance: Decimal? = nil,
+        currencyCode: String = "USD"
     ) {
-        self.id           = id
-        self.kind         = kind
-        self.displayName  = displayName
-        self.maskedNumber = maskedNumber
-        self.balance      = balance
+        self.id               = id
+        self.kind             = kind
+        self.displayName      = displayName
+        self.maskedNumber     = maskedNumber
+        self.balance          = balance
+        // Default available == balance when the caller doesn't supply
+        // one (deposit products, fixtures, tests).
+        self.availableBalance = availableBalance ?? balance
+        self.currencyCode     = currencyCode
     }
 }
 
@@ -66,4 +87,5 @@ public enum AccountKind: String, Equatable, Hashable, Codable, CaseIterable {
     case checking
     case savings
     case credit
+    case investment
 }

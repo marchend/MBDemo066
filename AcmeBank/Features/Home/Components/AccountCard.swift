@@ -74,9 +74,10 @@ struct AccountCard: View {
     /// trivially audit-able and stays out of the view body.
     static func symbol(for kind: AccountKind) -> String {
         switch kind {
-        case .checking: return "banknote"
-        case .savings:  return "chart.line.uptrend.xyaxis"
-        case .credit:   return "creditcard"
+        case .checking:   return "banknote"
+        case .savings:    return "chart.line.uptrend.xyaxis"
+        case .credit:     return "creditcard"
+        case .investment: return "chart.pie"
         }
     }
 
@@ -85,9 +86,10 @@ struct AccountCard: View {
     static func accessibilityLabel(for account: Account) -> String {
         let kindWord: String
         switch account.kind {
-        case .checking: kindWord = "Checking"
-        case .savings:  kindWord = "Savings"
-        case .credit:   kindWord = "Credit"
+        case .checking:   kindWord = "Checking"
+        case .savings:    kindWord = "Savings"
+        case .credit:     kindWord = "Credit"
+        case .investment: kindWord = "Investment"
         }
         // Pull the last 4 from the masked number (strip non-digits).
         let last4 = account.maskedNumber.filter(\.isNumber)

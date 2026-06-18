@@ -74,9 +74,10 @@ final class AccountTests: XCTestCase {
         // These raw values are part of the persisted shape \u2014 changing
         // them silently breaks any prior JSON snapshot. Guard against
         // accidental rename.
-        XCTAssertEqual(AccountKind.checking.rawValue, "checking")
-        XCTAssertEqual(AccountKind.savings.rawValue,  "savings")
-        XCTAssertEqual(AccountKind.credit.rawValue,   "credit")
+        XCTAssertEqual(AccountKind.checking.rawValue,   "checking")
+        XCTAssertEqual(AccountKind.savings.rawValue,    "savings")
+        XCTAssertEqual(AccountKind.credit.rawValue,     "credit")
+        XCTAssertEqual(AccountKind.investment.rawValue, "investment")
     }
 
     func test_accountKind_codable_roundTripsAllCases() throws {
@@ -102,5 +103,40 @@ final class AccountTests: XCTestCase {
         let decoded = try JSONDecoder().decode(Account.self, from: data)
 
         XCTAssertEqual(decoded, original)
+    }
+
+    // MARK: - availableBalance / currencyCode defaults
+
+    func test_account_defaults_availableBalanceEqualsBalance_currencyUSD() {
+        let a = Account(
+            id:           "acct-1",
+            kind:         .checking,
+            displayName:  "Everyday",
+            maskedNumber: "1234",
+            balance:      Decimal(string: "100.00")!
+        )
+        XCTAssertEqual(a.availableBalance, Decimal(string: "100.00")!)
+        XCTAssertEqual(a.currencyCode, "USD")
+    }
+
+    func test_account_explicit_availableBalanceAndCurrency_areHeld() {
+        let credit = Account(
+            id:               "acct-6",
+            kind:             .credit,
+            displayName:      "Cashback Mastercard",
+            maskedNumber:     "4490",
+            balance:          Decimal(string: "-243.10")!,
+            availableBalance: Decimal(string: "4756.90")!,
+            currencyCode:     "CAD"
+        )
+        XCTAssertEqual(credit.availableBalance, Decimal(string: "4756.90")!)
+        XCTAssertEqual(credit.currencyCode, "CAD")
+        // Equality is structural across the new fields too.
+        XCTAssertNotEqual(
+            credit,
+            Account(id: credit.id, kind: credit.kind, displayName: credit.displayName,
+                    maskedNumber: credit.maskedNumber, balance: credit.balance,
+                    availableBalance: Decimal(string: "0.00")!, currencyCode: "CAD")
+        )
     }
 }
