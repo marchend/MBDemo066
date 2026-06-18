@@ -17,6 +17,100 @@ public protocol AccountsRepository {
     func fetchAccounts() async throws -> [Account]
 }
 
+// MARK: - Home dashboard value objects
+
+/// The full `/v1/home` payload the redesigned dashboard renders:
+/// the signed-in `customer`, their `accounts`, and the most recent
+/// transactions across those accounts. A pure value type \u2014 no UI,
+/// no networking, no formatting.
+public struct HomeDashboard: Equatable {
+    public let customer: Customer
+    public let accounts: [Account]
+    public let recentTransactions: [Transaction]
+
+    public init(
+        customer: Customer,
+        accounts: [Account],
+        recentTransactions: [Transaction]
+    ) {
+        self.customer           = customer
+        self.accounts           = accounts
+        self.recentTransactions = recentTransactions
+    }
+}
+
+/// The signed-in customer as returned by `/v1/home`. Note the BFF
+/// `customer` object carries **no email** \u2014 only id, name parts, and
+/// phone. The dashboard renders the initials, full name, phone, and
+/// the "Customer {id}" trust row from this.
+public struct Customer: Equatable {
+    public let id: String
+    public let firstName: String
+    public let lastName: String
+    public let phoneNumber: String
+
+    public init(id: String, firstName: String, lastName: String, phoneNumber: String) {
+        self.id          = id
+        self.firstName   = firstName
+        self.lastName    = lastName
+        self.phoneNumber = phoneNumber
+    }
+
+    /// First letter of `firstName` + first letter of `lastName`,
+    /// uppercased, e.g. "BO" for "Bankuser One". Empty parts are
+    /// skipped so a single-name customer still renders one letter.
+    public var initials: String {
+        let first = firstName.first.map { String($0) } ?? ""
+        let last  = lastName.first.map { String($0) } ?? ""
+        return (first + last).uppercased()
+    }
+
+    /// `firstName + " " + lastName`, with surrounding whitespace
+    /// trimmed so a missing part doesn't leave a dangling space.
+    public var fullName: String {
+        "\(firstName) \(lastName)".trimmingCharacters(in: .whitespaces)
+    }
+}
+
+/// One row of `recent_transactions` from `/v1/home`.
+///
+/// `postedDate` is decoded as the raw calendar-date STRING the BFF
+/// sends (`"YYYY-MM-DD"`) \u2014 NOT a `Date` \u2014 because the wire value is
+/// date-only and the ISO-8601 strategy throws on it. The view
+/// formats it for display via a `yyyy-MM-dd` parser.
+public struct Transaction: Equatable, Identifiable {
+    public let id: String
+    public let accountId: String
+    public let postedDate: String
+    public let merchantName: String
+    public let amount: Decimal
+    public let currencyCode: String
+
+    public init(
+        id: String,
+        accountId: String,
+        postedDate: String,
+        merchantName: String,
+        amount: Decimal,
+        currencyCode: String
+    ) {
+        self.id           = id
+        self.accountId    = accountId
+        self.postedDate   = postedDate
+        self.merchantName = merchantName
+        self.amount       = amount
+        self.currencyCode = currencyCode
+    }
+}
+
+/// Data source for the redesigned Home dashboard: the full
+/// `/v1/home` payload (customer + accounts + recent transactions).
+/// Separate from `AccountsRepository` so the accounts-only call site
+/// keeps working unchanged; production repositories conform to both.
+public protocol HomeRepositoryProtocol {
+    func fetchHome() async throws -> HomeDashboard
+}
+
 // MARK: - BFF base URL
 
 /// Resolves the BFF base URL. Reads `API_BASE_URL` from the app's
@@ -61,7 +155,7 @@ public enum APIConfig {
 /// captured from a real signed-in run so the Home redesign can define the
 /// value objects it needs from a concrete sample. Remove the `print` once
 /// the contract is pinned.
-public struct BFFHomeRepository: AccountsRepository {
+public struct BFFHomeRepository: AccountsRepository, HomeRepositoryProtocol {
 
     /// Failure modes surfaced to the view-model. The view shows a generic
     /// banner for all of them; the console log (and the typed case) carry
@@ -96,6 +190,26 @@ public struct BFFHomeRepository: AccountsRepository {
     }
 
     public func fetchAccounts() async throws -> [Account] {
+        let dto = try await decodeHome()
+        return dto.toDashboard().accounts
+    }
+
+    /// Decodes the FULL `/v1/home` payload — customer, accounts, and
+    /// recent transactions — into the dashboard's value objects.
+    /// Shares the same authenticated request / raw-body-print / error
+    /// handling as `fetchAccounts()`.
+    public func fetchHome() async throws -> HomeDashboard {
+        let dto = try await decodeHome()
+        return dto.toDashboard()
+    }
+
+    // MARK: - Shared request + decode
+
+    /// Performs the authenticated `GET /v1/home`, prints the raw body,
+    /// maps non-2xx onto `RepositoryError`, and decodes the lenient
+    /// `HomeResponseDTO`. Both public fetch methods funnel through here
+    /// so the request/print/error logic lives in exactly one place.
+    private func decodeHome() async throws -> HomeResponseDTO {
         guard !accessToken.isEmpty else {
             throw RepositoryError.notAuthenticated
         }
@@ -123,8 +237,7 @@ public struct BFFHomeRepository: AccountsRepository {
         do {
             let decoder = JSONDecoder()
             decoder.keyDecodingStrategy = .convertFromSnakeCase
-            let home = try decoder.decode(HomeResponseDTO.self, from: data)
-            return home.accounts.map { $0.toAccount() }
+            return try decoder.decode(HomeResponseDTO.self, from: data)
         } catch {
             throw RepositoryError.decoding(underlying: error)
         }
@@ -158,15 +271,49 @@ public struct BFFHomeRepository: AccountsRepository {
 
 // MARK: - BFF wire DTOs
 
-/// The `/v1/home` response. Only `accounts` is mapped into the UI today;
-/// the rest of the payload (`customer`, `recent_transactions`, …) is left
-/// unmodelled on purpose and surfaces only in the printed JSON, which is
-/// what the Home redesign will use to define its value objects.
+/// The `/v1/home` response, modelled in full for the redesigned
+/// dashboard: `customer`, `accounts`, and `recent_transactions`.
+///
+/// Every field is optional / lenient on purpose: a minor contract
+/// drift renders best-effort rather than failing the whole decode
+/// (the raw body is printed regardless, so the real shape is always
+/// recoverable from the console).
 ///
 /// Decoded with `.convertFromSnakeCase`, so wire keys like
-/// `masked_number` map onto the camelCase properties below.
+/// `masked_number` / `recent_transactions` map onto the camelCase
+/// properties below.
 private struct HomeResponseDTO: Decodable {
-    let accounts: [AccountDTO]
+    let customer: CustomerDTO?
+    // `[AccountDTO?]` so a single malformed element decodes to `nil`
+    // and is dropped, rather than throwing the whole array.
+    let accounts: [AccountDTO?]?
+    let recentTransactions: [TransactionDTO?]?
+
+    func toDashboard() -> HomeDashboard {
+        HomeDashboard(
+            customer:           (customer ?? CustomerDTO()).toCustomer(),
+            accounts:           (accounts ?? []).compactMap { $0?.toAccount() },
+            recentTransactions: (recentTransactions ?? []).compactMap { $0?.toTransaction() }
+        )
+    }
+}
+
+/// The `customer` object. NOTE: the BFF customer carries no email —
+/// only id, name parts, and phone.
+private struct CustomerDTO: Decodable {
+    var id: String?
+    var firstName: String?
+    var lastName: String?
+    var phoneNumber: String?
+
+    func toCustomer() -> Customer {
+        Customer(
+            id:          id ?? "",
+            firstName:   firstName ?? "",
+            lastName:    lastName ?? "",
+            phoneNumber: phoneNumber ?? ""
+        )
+    }
 }
 
 /// One account from the BFF. Fields are optional and the mapping is
@@ -177,28 +324,59 @@ private struct AccountDTO: Decodable {
     let name: String?
     let maskedNumber: String?
     let balance: Decimal?
+    let availableBalance: Decimal?
     let type: String?
+    let currencyCode: String?
 
     func toAccount() -> Account {
-        Account(
-            id:           id ?? UUID().uuidString,
-            kind:         AccountDTO.kind(from: type),
-            displayName:  name ?? "Account",
-            maskedNumber: maskedNumber ?? "",
-            balance:      balance ?? 0
+        let bal = balance ?? 0
+        return Account(
+            id:               id ?? UUID().uuidString,
+            kind:             AccountDTO.kind(from: type),
+            displayName:      name ?? "Account",
+            maskedNumber:     maskedNumber ?? "",
+            balance:          bal,
+            availableBalance: availableBalance ?? bal,
+            currencyCode:     currencyCode ?? "USD"
         )
     }
 
-    /// Maps the BFF `type` string onto the app's `AccountKind`. Tolerant
-    /// of the `chequing` spelling and defaults unknown/other product
-    /// types (e.g. `investment`) to `.checking` so decoding never fails
-    /// on an unmodelled kind.
+    /// Maps the BFF `type` string onto the app's `AccountKind`. The
+    /// wire values are UPPERCASE (CHEQUING / SAVINGS / CREDIT /
+    /// INVESTMENT); we lowercase first and tolerate the US `checking`
+    /// spelling. Unknown types default to `.checking` so decoding
+    /// never fails on an unmodelled kind.
     private static func kind(from raw: String?) -> AccountKind {
         switch (raw ?? "").lowercased() {
         case "savings":               return .savings
         case "credit":                return .credit
+        case "investment":            return .investment
         case "checking", "chequing":  return .checking
         default:                      return .checking
         }
+    }
+}
+
+/// One `recent_transactions` row. `postedDate` is decoded as the raw
+/// `"YYYY-MM-DD"` STRING (the wire value is date-only; `.iso8601`
+/// would throw on it). `merchant_name` is the only label the BFF
+/// sends — there is no `description` / `category`.
+private struct TransactionDTO: Decodable {
+    let id: String?
+    let accountId: String?
+    let postedDate: String?
+    let merchantName: String?
+    let amount: Decimal?
+    let currencyCode: String?
+
+    func toTransaction() -> Transaction {
+        Transaction(
+            id:           id ?? UUID().uuidString,
+            accountId:    accountId ?? "",
+            postedDate:   postedDate ?? "",
+            merchantName: merchantName ?? "",
+            amount:       amount ?? 0,
+            currencyCode: currencyCode ?? "USD"
+        )
     }
 }

@@ -1,147 +1,502 @@
 import SwiftUI
 
-/// Top-level Home dashboard screen.
+/// Top-level Home dashboard screen (redesigned).
 ///
-/// Composition:
-/// - `DashboardNavBar`         \u2014 logo + wordmark + bell with red badge
-/// - `GreetingHeader`          \u2014 "Good morning, Demo"
-/// - `AccountCardCarousel`     \u2014 horizontal cards over `vm.accounts`
-/// - `QuickActionsRow`         \u2014 Transfer / Pay Bills / Deposit / More
-/// - Loading spinner overlay when `vm.isLoading`
-/// - Inline error banner       \u2014 `vm.errorMessage`
-///
-/// The view binds to `HomeDashboardViewModel` (PR 2) and kicks the
-/// first load from `.task { await vm.load() }`. SwiftUI guarantees
-/// `.task` runs once when the view first appears and is cancelled on
-/// disappear, which is exactly the lifecycle the ViewModel's
-/// "cancel any in-flight load" contract is designed around.
+/// Renders the live BFF `GET /v1/home` payload top-to-bottom:
+/// - Brand bar (hexagon "A" logo + "Acme Bank" wordmark)
+/// - Two-line greeting ("Welcome back," / customer first name)
+/// - Signed-in card (initials avatar, full name, phone, Okta trust row)
+/// - Accounts section (one row per account)
+/// - Recent Transactions section (one row per transaction)
+/// - A centred Log out control
 ///
 /// ## ViewModel ownership: `@StateObject`, not `@ObservedObject`
 /// The ViewModel is constructed inside this view's `init` and stored
 /// as a `@StateObject`, so SwiftUI owns its lifetime for the duration
-/// the view is on screen. The composition root (`RootCoordinator`)
-/// passes the *dependencies* (`AccountsRepository` + `SignedInUser`)
-/// rather than a pre-built ViewModel; `RootCoordinator.view(for:)` is
-/// called from `ContentView.body`, which SwiftUI re-evaluates on every
-/// `AppCoordinator` publish, so handing it a freshly-allocated VM each
-/// time and binding via `@ObservedObject` would silently discard
-/// already-loaded accounts and re-fire `load()` on every re-render.
-/// `@StateObject`'s autoclosure init runs **once** per view identity,
-/// which is the lifecycle this screen actually wants.
-///
-/// ## Navigation
-/// `HomeDashboardView` owns the `NavigationStack` and registers a
-/// single `.navigationDestination(for: QuickAction.DestinationTag.self)`
-/// resolver. The resolver hands every tag (other than `.more`, which
-/// `QuickActionsRow` renders as an inert button so no value is ever
-/// pushed) to `PlaceholderDestinationView` \u2014 the dashboard mockup
-/// reuses one "Coming soon" screen for Transfer / Pay Bills / Deposit.
+/// the view is on screen. The composition root passes the
+/// *dependencies* (`HomeRepositoryProtocol` + `SignedInUser` +
+/// `onSignOut`) rather than a pre-built ViewModel; `view(for:)` is
+/// re-evaluated on every `AppCoordinator` publish, so `@StateObject`'s
+/// once-per-identity init is what keeps a re-render from discarding
+/// already-loaded data and re-firing `load()`.
 struct HomeDashboardView: View {
 
     @StateObject private var viewModel: HomeDashboardViewModel
 
+    /// Invoked when the user taps Log out, or when the session expires
+    /// (BFF 401). Routes back to the login screen via the composition
+    /// root's `AppCoordinator.signOut()`.
+    private let onSignOut: () -> Void
+
     /// Dependency-injecting init used by the composition root
     /// (`RootCoordinator.view(for:)`). The ViewModel is built lazily
-    /// inside the `@StateObject` autoclosure so SwiftUI \u2014 not the
-    /// caller \u2014 controls its lifetime. See the type-level doc for
-    /// why this matters.
-    init(repository: AccountsRepository, user: SignedInUser) {
+    /// inside the `@StateObject` autoclosure so SwiftUI — not the
+    /// caller — controls its lifetime.
+    init(
+        repository: HomeRepositoryProtocol,
+        user: SignedInUser,
+        onSignOut: @escaping () -> Void
+    ) {
         _viewModel = StateObject(
             wrappedValue: HomeDashboardViewModel(
                 repository: repository,
                 user:       user
             )
         )
+        self.onSignOut = onSignOut
     }
 
     /// Test / preview init that injects an already-built ViewModel.
-    /// Used by `HomeDashboardViewModelTests` fixtures and by the
-    /// SwiftUI `#Preview` below. Still wraps the value in
-    /// `StateObject(wrappedValue:)` so the lifetime story is the same
-    /// as the production path \u2014 SwiftUI owns the instance once the
-    /// view appears.
-    init(viewModel: HomeDashboardViewModel) {
+    init(viewModel: HomeDashboardViewModel, onSignOut: @escaping () -> Void = {}) {
         _viewModel = StateObject(wrappedValue: viewModel)
+        self.onSignOut = onSignOut
     }
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                DashboardNavBar()
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
 
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {
+                brandBar
 
-                        GreetingHeader(
-                            salutation: viewModel.greetingSalutation,
-                            firstName:  viewModel.greetingFirstName
-                        )
+                greetingHeader
 
-                        // \u2500\u2500 Account carousel \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-                        AccountCardCarousel(accounts: viewModel.accounts)
+                signedInCard
 
-                        // \u2500\u2500 Inline error banner \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-                        // `InlineErrorBannerView` already renders
-                        // nothing when `message` is nil \u2014 pass the
-                        // optional through directly to match the
-                        // call-site pattern established by
-                        // `LoginView`.
-                        InlineErrorBannerView(message: viewModel.errorMessage)
-                            .padding(.horizontal, 20)
+                accountsSection
 
-                        // \u2500\u2500 Quick actions \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-                        QuickActionsRow()
+                transactionsSection
 
-                        Spacer(minLength: 24)
-                    }
-                    .padding(.top, 8)
+                // Inline error + Retry for a non-auth load failure.
+                if let message = viewModel.errorMessage {
+                    errorBanner(message)
                 }
+
+                logOutButton
             }
-            .background(Color(.systemGroupedBackground).ignoresSafeArea())
-            // Centred spinner while the first (or a retry) load is in
-            // flight. Overlay rather than replacing the layout so the
-            // last-known-good carousel stays visible behind the
-            // spinner on a retry.
-            .overlay {
-                if viewModel.isLoading {
-                    ProgressView()
-                        .progressViewStyle(.circular)
-                        .scaleEffect(1.2)
-                        .accessibilityIdentifier("dashboard.loadingSpinner")
-                }
+            .padding(.horizontal, 20)
+            .padding(.top, 12)
+            .padding(.bottom, 28)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .overlay {
+            if viewModel.isLoading {
+                ProgressView()
+                    .progressViewStyle(.circular)
+                    .scaleEffect(1.2)
+                    .accessibilityIdentifier("dashboard.loadingSpinner")
             }
-            // Single destination resolver for every QuickAction push.
-            // `.more` is rendered as an inert Button by
-            // `QuickActionsRow` (no NavigationLink value emitted), so
-            // this resolver only ever fires for Transfer / Pay Bills
-            // / Deposit \u2014 each maps to the shared
-            // `PlaceholderDestinationView` until the real feature
-            // screens ship.
-            .navigationDestination(for: QuickAction.DestinationTag.self) { tag in
-                PlaceholderDestinationView(
-                    title: Self.placeholderTitle(for: tag),
-                    accessibilityTag: tag.rawValue
-                )
-            }
-            .task {
-                await viewModel.load()
-            }
+        }
+        // A rejected token (401) can't be retried in place — route the
+        // user back to login.
+        .onChange(of: viewModel.sessionExpired) { _, expired in
+            if expired { onSignOut() }
+        }
+        .task {
+            await viewModel.load()
         }
     }
 
-    /// Human-readable title shown on the placeholder for a given
-    /// quick-action tag. Kept alongside the resolver so the
-    /// raw-enum-case to "Pay Bills" / "Deposit" / "Transfer" mapping
-    /// lives in one place. `.more` is included for completeness even
-    /// though `QuickActionsRow` never pushes it \u2014 a future PR that
-    /// wires More to a real destination will replace the case here.
-    static func placeholderTitle(for tag: QuickAction.DestinationTag) -> String {
-        switch tag {
-        case .transfer: return "Transfer"
-        case .payBills: return "Pay Bills"
-        case .deposit:  return "Deposit"
-        case .more:     return "More"
+    // MARK: - Brand bar
+
+    private var brandBar: some View {
+        HStack(spacing: 10) {
+            HexagonLogo()
+                .frame(width: 34, height: 38)
+                .accessibilityHidden(true)
+
+            Text("Acme Bank")
+                .font(.title3)
+                .fontWeight(.bold)
+                .foregroundStyle(Color.acmeNavy)
+
+            Spacer(minLength: 0)
         }
+        .padding(.vertical, 8)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Acme Bank")
+    }
+
+    // MARK: - Greeting
+
+    private var greetingHeader: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("Welcome back,")
+                .font(.subheadline)
+                .foregroundStyle(Color.secondary)
+            Text(viewModel.greetingFirstName)
+                .font(.largeTitle)
+                .fontWeight(.bold)
+                .foregroundStyle(Color.primary)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("dashboard.greeting")
+    }
+
+    // MARK: - Signed-in card
+
+    @ViewBuilder
+    private var signedInCard: some View {
+        let customer = viewModel.customer
+        VStack(alignment: .leading, spacing: 14) {
+            Text("SIGNED IN")
+                .font(.caption2)
+                .fontWeight(.semibold)
+                .tracking(1.2)
+                .foregroundStyle(Color.white.opacity(0.6))
+
+            HStack(spacing: 14) {
+                ZStack {
+                    Circle().fill(Color.white.opacity(0.15))
+                    Text(customer?.initials ?? "")
+                        .font(.headline)
+                        .fontWeight(.bold)
+                        .foregroundStyle(Color.white)
+                }
+                .frame(width: 48, height: 48)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(customer?.fullName ?? " ")
+                        .font(.headline)
+                        .foregroundStyle(Color.white)
+                    Text(customer?.phoneNumber ?? " ")
+                        .font(.subheadline)
+                        .foregroundStyle(Color.white.opacity(0.75))
+                }
+
+                Spacer(minLength: 0)
+            }
+
+            HStack(spacing: 8) {
+                Image(systemName: "checkmark.shield.fill")
+                    .foregroundStyle(Color.green)
+                    .accessibilityHidden(true)
+                Text("Authenticated via Okta \u{00B7} Customer \(customer?.id ?? "")")
+                    .font(.caption)
+                    .foregroundStyle(Color.white.opacity(0.85))
+                Spacer(minLength: 0)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(Color.white.opacity(0.08))
+            )
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color.acmeNavy)
+        )
+        .accessibilityIdentifier("dashboard.signedInCard")
+    }
+
+    // MARK: - Accounts
+
+    private var accountsSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionHeader("Accounts")
+
+            VStack(spacing: 0) {
+                ForEach(Array(viewModel.accounts.enumerated()), id: \.element.id) { index, account in
+                    AccountRow(account: account)
+                    if index < viewModel.accounts.count - 1 {
+                        Divider().padding(.leading, 60)
+                    }
+                }
+            }
+            .cardBackground()
+        }
+    }
+
+    // MARK: - Recent transactions
+
+    private var transactionsSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionHeader("Recent Transactions")
+
+            VStack(spacing: 0) {
+                if viewModel.recentTransactions.isEmpty {
+                    Text("No recent transactions.")
+                        .font(.subheadline)
+                        .foregroundStyle(Color.secondary)
+                        .padding(16)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    ForEach(Array(viewModel.recentTransactions.enumerated()), id: \.element.id) { index, txn in
+                        TransactionRow(transaction: txn)
+                        if index < viewModel.recentTransactions.count - 1 {
+                            Divider().padding(.leading, 60)
+                        }
+                    }
+                }
+            }
+            .cardBackground()
+        }
+    }
+
+    // MARK: - Log out
+
+    private var logOutButton: some View {
+        Button(action: onSignOut) {
+            VStack(spacing: 4) {
+                Image(systemName: "rectangle.portrait.and.arrow.right")
+                    .font(.system(size: 22, weight: .regular))
+                Text("Log out")
+                    .font(.subheadline)
+            }
+            .foregroundStyle(Color.secondary)
+            .frame(maxWidth: .infinity)
+            .padding(.top, 8)
+        }
+        .accessibilityIdentifier("dashboard.logOut")
+        .accessibilityLabel("Log out")
+    }
+
+    // MARK: - Helpers
+
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title)
+            .font(.headline)
+            .fontWeight(.bold)
+            .foregroundStyle(Color.primary)
+    }
+
+    private func errorBanner(_ message: String) -> some View {
+        VStack(spacing: 10) {
+            Text(message)
+                .font(.subheadline)
+                .foregroundStyle(Color.red)
+                .multilineTextAlignment(.center)
+            Button("Retry") {
+                Task { await viewModel.load() }
+            }
+            .buttonStyle(.bordered)
+        }
+        .frame(maxWidth: .infinity)
+        .padding()
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(.systemBackground))
+        )
+        .accessibilityIdentifier("dashboard.errorBanner")
+    }
+}
+
+// MARK: - Hexagon logo
+
+/// The brand bar's hexagonal "A" mark in Acme navy.
+private struct HexagonLogo: View {
+    var body: some View {
+        ZStack {
+            Hexagon()
+                .fill(Color.acmeNavy)
+            Text("A")
+                .font(.system(size: 18, weight: .heavy, design: .rounded))
+                .foregroundStyle(Color.white)
+        }
+    }
+}
+
+/// A flat-top hexagon path, scaled to its bounding rect.
+private struct Hexagon: Shape {
+    func path(in rect: CGRect) -> Path {
+        let w = rect.width
+        let h = rect.height
+        var p = Path()
+        p.move(to:    CGPoint(x: w * 0.50, y: 0))
+        p.addLine(to: CGPoint(x: w,        y: h * 0.25))
+        p.addLine(to: CGPoint(x: w,        y: h * 0.75))
+        p.addLine(to: CGPoint(x: w * 0.50, y: h))
+        p.addLine(to: CGPoint(x: 0,        y: h * 0.75))
+        p.addLine(to: CGPoint(x: 0,        y: h * 0.25))
+        p.closeSubpath()
+        return p
+    }
+}
+
+// MARK: - Account row
+
+/// One account row in the Accounts card.
+private struct AccountRow: View {
+    let account: Account
+
+    var body: some View {
+        HStack(spacing: 14) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(Color.acmeNavy)
+                Image(systemName: "creditcard.fill")
+                    .foregroundStyle(Color.white)
+                    .font(.system(size: 18))
+            }
+            .frame(width: 44, height: 44)
+            .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(account.displayName)
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(Color.primary)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(Color.secondary)
+            }
+
+            Spacer(minLength: 8)
+
+            VStack(alignment: .trailing, spacing: 3) {
+                Text(balanceText)
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(account.balance < 0 ? Color.red : Color.primary)
+                Text(secondaryText)
+                    .font(.caption)
+                    .foregroundStyle(Color.secondary)
+            }
+        }
+        .padding(16)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityIdentifier("accountRow.\(account.id)")
+    }
+
+    /// "{Type} · ····{last4}" — Type title-cased per the design,
+    /// last4 pulled from the masked number.
+    private var subtitle: String {
+        "\(Self.typeLabel(for: account.kind)) \u{00B7} \u{00B7}\u{00B7}\u{00B7}\u{00B7}\(last4)"
+    }
+
+    /// Balance, currency-formatted on the row's own currency code.
+    /// Negative balances render with a leading minus.
+    private var balanceText: String {
+        CurrencyFormatter.string(from: account.balance, currencyCode: account.currencyCode)
+    }
+
+    /// Gray subtext under the balance: the currency code for a normal
+    /// (non-negative) balance, or "{available} available" for a
+    /// negative (credit) balance.
+    private var secondaryText: String {
+        if account.balance < 0 {
+            let available = CurrencyFormatter.string(
+                from: account.availableBalance,
+                currencyCode: account.currencyCode
+            )
+            return "\(available) available"
+        }
+        return account.currencyCode
+    }
+
+    private var last4: String {
+        let digits = account.maskedNumber.filter(\.isNumber)
+        return String(digits.suffix(4))
+    }
+
+    private var accessibilityLabel: String {
+        "\(account.displayName), \(Self.typeLabel(for: account.kind)), balance \(balanceText)"
+    }
+
+    /// Title-cased product label per the design spec.
+    static func typeLabel(for kind: AccountKind) -> String {
+        switch kind {
+        case .checking:   return "Chequing"
+        case .savings:    return "Savings"
+        case .credit:     return "Credit Card"
+        case .investment: return "Investment"
+        }
+    }
+}
+
+// MARK: - Transaction row
+
+/// One transaction row in the Recent Transactions card.
+private struct TransactionRow: View {
+    let transaction: Transaction
+
+    /// `yyyy-MM-dd` (UTC) parser for the date-only wire value. Held
+    /// statically so the row doesn't re-spin a formatter per render.
+    private static let inputFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale     = Locale(identifier: "en_US_POSIX")
+        f.timeZone   = TimeZone(identifier: "UTC")
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
+
+    /// "MMM d, yyyy" display formatter (e.g. "May 20, 2024").
+    private static let displayFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale     = Locale(identifier: "en_US")
+        f.timeZone   = TimeZone(identifier: "UTC")
+        f.dateFormat = "MMM d, yyyy"
+        return f
+    }()
+
+    var body: some View {
+        HStack(spacing: 14) {
+            ZStack {
+                Circle().fill(Color(.systemGray5))
+                Text(initial)
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(Color.primary)
+            }
+            .frame(width: 44, height: 44)
+            .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(transaction.merchantName)
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(Color.primary)
+                Text(formattedDate)
+                    .font(.caption)
+                    .foregroundStyle(Color.secondary)
+            }
+
+            Spacer(minLength: 8)
+
+            Text(amountText)
+                .font(.subheadline)
+                .fontWeight(.semibold)
+                .foregroundStyle(transaction.amount < 0 ? Color.primary : Color.green)
+        }
+        .padding(16)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(transaction.merchantName), \(formattedDate), \(amountText)")
+        .accessibilityIdentifier("transactionRow.\(transaction.id)")
+    }
+
+    private var initial: String {
+        transaction.merchantName.first.map { String($0).uppercased() } ?? "?"
+    }
+
+    private var amountText: String {
+        CurrencyFormatter.string(from: transaction.amount, currencyCode: transaction.currencyCode)
+    }
+
+    /// Renders the `"YYYY-MM-DD"` string as "MMM d, yyyy". Falls back
+    /// to the raw string if it doesn't parse (best-effort).
+    private var formattedDate: String {
+        guard let date = Self.inputFormatter.date(from: transaction.postedDate) else {
+            return transaction.postedDate
+        }
+        return Self.displayFormatter.string(from: date)
+    }
+}
+
+// MARK: - Card background
+
+private extension View {
+    /// White rounded-card chrome shared by the Accounts and Recent
+    /// Transactions cards.
+    func cardBackground() -> some View {
+        self
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(Color(.systemBackground))
+            )
     }
 }
 
@@ -151,11 +506,11 @@ struct HomeDashboardView: View {
     let vm = HomeDashboardViewModel(
         repository: StubAccountsRepository(),
         user: SignedInUser(
-            firstName: "Demo",
-            lastName:  "Person",
-            email:     "demo.person@example.com"
+            firstName: "Bankuser",
+            lastName:  "One",
+            email:     "bankuser.one@example.com"
         )
     )
-    return HomeDashboardView(viewModel: vm)
+    return HomeDashboardView(viewModel: vm, onSignOut: {})
         .task { await vm.load() }
 }

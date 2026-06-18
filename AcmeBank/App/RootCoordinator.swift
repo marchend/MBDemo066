@@ -96,7 +96,8 @@ enum RootCoordinator {
         case .signedIn(let session):
             HomeDashboardView(
                 repository: BFFHomeRepository(accessToken: session.accessToken),
-                user:       SignedInUser(session: session)
+                user:       SignedInUser(session: session),
+                onSignOut:  { coordinator.signOut() }
             )
         }
     }

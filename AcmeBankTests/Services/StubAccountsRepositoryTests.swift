@@ -86,4 +86,32 @@ final class StubAccountsRepositoryTests: XCTestCase {
 
         XCTAssertEqual(accounts, StubAccountsRepository.fixtures)
     }
+
+    // MARK: - fetchHome() fixture
+
+    func test_fetchHome_returnsBankuserOneCustomer() async throws {
+        let home = try await StubAccountsRepository().fetchHome()
+        XCTAssertEqual(home.customer.id, "cust-1002")
+        XCTAssertEqual(home.customer.fullName, "Bankuser One")
+        XCTAssertEqual(home.customer.initials, "BO")
+        XCTAssertEqual(home.customer.phoneNumber, "+1-647-555-0198")
+    }
+
+    func test_fetchHome_includesAccountsAndTransactions() async throws {
+        let home = try await StubAccountsRepository().fetchHome()
+        XCTAssertFalse(home.accounts.isEmpty, "home fixture should carry accounts")
+        XCTAssertFalse(home.recentTransactions.isEmpty, "home fixture should carry transactions")
+
+        // The credit fixture carries a separate available balance and
+        // a negative balance, which the dashboard renders specially.
+        let credit = try XCTUnwrap(home.accounts.first(where: { $0.kind == .credit }))
+        XCTAssertLessThan(credit.balance, 0)
+        XCTAssertGreaterThan(credit.availableBalance, credit.balance)
+        XCTAssertEqual(credit.currencyCode, "USD")
+    }
+
+    func test_fetchHome_matchesStaticHomeFixture() async throws {
+        let home = try await StubAccountsRepository().fetchHome()
+        XCTAssertEqual(home, StubAccountsRepository.homeFixture)
+    }
 }

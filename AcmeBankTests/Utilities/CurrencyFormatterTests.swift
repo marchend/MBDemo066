@@ -74,4 +74,39 @@ final class CurrencyFormatterTests: XCTestCase {
             "Expected two-fraction-digit rounding, got \(rendered)"
         )
     }
+
+    // MARK: - Per-currency-code overload
+
+    func test_usdCode_matchesTheSharedUSDRendering() {
+        // "USD" routes through the shared en_US formatter, so the
+        // string must be byte-identical to the no-code overload.
+        XCTAssertEqual(
+            CurrencyFormatter.string(from: Decimal(string: "1542.88")!, currencyCode: "USD"),
+            CurrencyFormatter.string(from: Decimal(string: "1542.88")!)
+        )
+    }
+
+    func test_blankCode_fallsBackToUSD() {
+        XCTAssertEqual(
+            CurrencyFormatter.string(from: Decimal(string: "1542.88")!, currencyCode: ""),
+            "$1,542.88"
+        )
+    }
+
+    func test_nonUSDCode_rendersTwoFractionDigits() {
+        // We don't pin the exact symbol (locale/SDK can render CA$ vs
+        // C$), but the amount + grouping + two fraction digits must
+        // hold for any recognised code.
+        let rendered = CurrencyFormatter.string(from: Decimal(string: "1542.88")!, currencyCode: "CAD")
+        XCTAssertTrue(rendered.contains("1,542.88"),
+                      "Expected the CAD rendering to contain '1,542.88'; got \(rendered)")
+    }
+
+    func test_nonUSDNegative_rendersWithMinus() {
+        let rendered = CurrencyFormatter.string(from: Decimal(string: "-243.10")!, currencyCode: "CAD")
+        XCTAssertTrue(rendered.contains("-"),
+                      "Expected a leading minus in the negative CAD rendering; got \(rendered)")
+        XCTAssertTrue(rendered.contains("243.10"),
+                      "Expected the CAD rendering to contain '243.10'; got \(rendered)")
+    }
 }
