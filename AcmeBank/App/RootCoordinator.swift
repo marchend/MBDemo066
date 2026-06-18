@@ -17,14 +17,15 @@ import SwiftUI
 /// `ContentView` calls `RootCoordinator.view(for: coordinator)` to
 /// produce the screen for the current state. The signed-in branch
 /// hands `HomeDashboardView` its **dependencies** \u2014 a
-/// `StubAccountsRepository()` and the `SignedInUser` projected from
-/// the freshly-decoded `UserSession` \u2014 not a pre-built
-/// `HomeDashboardViewModel`. The view itself owns the ViewModel via
-/// `@StateObject`, so SwiftUI controls its lifetime and a re-render
-/// of `ContentView` doesn't silently rebuild it.
-/// (The repository will be swapped for the real
-/// `AccountAPIRepository` in a future PR \u2014 the composition-root seam
-/// here is the only place that needs to change.)
+/// `BFFHomeRepository` (wired with the session's Okta access token)
+/// and the `SignedInUser` projected from the freshly-decoded
+/// `UserSession` \u2014 not a pre-built `HomeDashboardViewModel`. The view
+/// itself owns the ViewModel via `@StateObject`, so SwiftUI controls
+/// its lifetime and a re-render of `ContentView` doesn't silently
+/// rebuild it.
+/// (The composition-root seam here is the only place that decides
+/// which `AccountsRepository` the dashboard runs against \u2014
+/// `StubAccountsRepository` is still used by previews and tests.)
 ///
 /// ## Why pass dependencies, not the ViewModel?
 /// `view(for:)` is called from `ContentView.body`, which SwiftUI
@@ -76,12 +77,16 @@ enum RootCoordinator {
     ///   spinner state set inside `handleSignIn(...)` land on the
     ///   live form.
     /// - On `.signedIn(session)`: `HomeDashboardView` constructed
-    ///   with its dependencies (`StubAccountsRepository()` +
+    ///   with its dependencies (`BFFHomeRepository` +
     ///   `SignedInUser(session:)`). The view owns its ViewModel via
     ///   `@StateObject`, so a re-evaluation of `ContentView.body`
-    ///   does not blow away dashboard state. The session's
-    ///   `UserSession` is projected to a `SignedInUser` here \u2014 the
-    ///   feature layer never sees the access token.
+    ///   does not blow away dashboard state.
+    ///
+    ///   The repository is given the session's Okta `accessToken` so it
+    ///   can authenticate the BFF `GET /v1/home` call \u2014 this is the only
+    ///   place the token crosses into the repository. The `UserSession`
+    ///   is still projected to a token-free `SignedInUser` for the
+    ///   feature/view layer, which never sees the access token directly.
     @ViewBuilder
     static func view(for coordinator: AppCoordinator) -> some View {
         switch coordinator.state {
@@ -90,7 +95,7 @@ enum RootCoordinator {
 
         case .signedIn(let session):
             HomeDashboardView(
-                repository: StubAccountsRepository(),
+                repository: BFFHomeRepository(accessToken: session.accessToken),
                 user:       SignedInUser(session: session)
             )
         }
