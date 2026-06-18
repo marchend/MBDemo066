@@ -12,20 +12,26 @@ final class HomeDashboardViewModelTests: XCTestCase {
 
     // MARK: - Fixtures
 
-    /// A `Date` whose UTC hour is 9 — falls in the morning window
-    /// regardless of CI host time zone (the ViewModel defers to
-    /// `GreetingProvider`, which uses `.current` calendar; using a
-    /// UTC-anchored hour here keeps the assertion stable on any host
-    /// whose local hour-of-day rolls into the same morning bucket).
+    /// A `Date` whose UTC hour is 10 — falls in the morning window
+    /// regardless of CI host time zone (the ViewModel defers to the
+    /// `Date.greeting(firstName:)` extension, which uses `.current`
+    /// calendar; using a UTC-anchored hour here keeps the assertion
+    /// stable on any host whose local hour-of-day rolls into the same
+    /// morning bucket).
     ///
     /// We don't actually rely on the CI host's calendar here because
     /// the assertions below build the expected string by *calling
-    /// `GreetingProvider` with the same `now()`* — that way the test
-    /// asserts "the ViewModel routes the injected clock + user
-    /// through the provider", not a hard-coded copy string.
+    /// the same `Date.greeting(firstName:)` extension with the same
+    /// `now()`* — that way the test asserts "the ViewModel routes the
+    /// injected clock + user through the extension", not a hard-coded
+    /// copy string.
     private let fixedDate = Date(timeIntervalSince1970: 1_717_236_000)  // 2024-06-01T10:00:00Z
 
-    private let demoUser = SignedInUser(firstName: "Demo")
+    private let demoUser = SignedInUser(
+        firstName: "Demo",
+        lastName:  "Person",
+        email:     "demo.person@example.com"
+    )
 
     // MARK: - Fake repositories
 
@@ -85,16 +91,17 @@ final class HomeDashboardViewModelTests: XCTestCase {
         // — pinning a literal "Good morning, Demo" would couple this
         // test to the CI host's time zone (the fixed Date is
         // 10:00 UTC, but local hour varies). Asserting via the
-        // provider verifies the wiring without leaking timezone-flake.
-        let expected = GreetingProvider.greeting(
-            for:       fixedDate,
-            firstName: "Demo"
-        )
+        // extension verifies the wiring without leaking timezone-flake.
+        let expected = fixedDate.greeting(firstName: "Demo")
         XCTAssertEqual(vm.greeting, expected)
     }
 
     func test_init_usesInjectedFirstNameNotADefault() {
-        let alex = SignedInUser(firstName: "Alex")
+        let alex = SignedInUser(
+            firstName: "Alex",
+            lastName:  "Example",
+            email:     "alex@example.com"
+        )
         let vm = HomeDashboardViewModel(
             repository: SuccessRepo(accounts: []),
             user:       alex,
@@ -226,8 +233,14 @@ final class HomeDashboardViewModelTests: XCTestCase {
 
         let loadTask = Task { await vm.load() }
 
-        // Yield until the ViewModel has entered `load()` and set the flag.
-        await waitUntil { vm.isLoading == true }
+        // Wait, with a real wall-clock deadline, for the ViewModel to
+        // enter `load()` and flip the flag. Using `Task.sleep` rather
+        // than a bare `Task.yield()` spin loop means a loaded CI host
+        // actually parks the test task and lets the load task run —
+        // see the helper's doc comment for why this matters.
+        let entered = await waitUntil(timeout: 1.0) { vm.isLoading == true }
+        XCTAssertTrue(entered,
+                      "ViewModel did not flip isLoading to true within 1s — load() may not have started")
         XCTAssertTrue(vm.isLoading)
 
         await gate.open()
@@ -239,17 +252,31 @@ final class HomeDashboardViewModelTests: XCTestCase {
 
     // MARK: - Helpers
 
-    /// Spin-yields until `condition` is true, with a small ceiling so
-    /// a regression doesn't hang CI forever.
+    /// Polls `condition` until it returns `true` or `timeout` seconds
+    /// elapse on the wall clock. Returns `true` if the condition was
+    /// observed, `false` if the deadline expired.
+    ///
+    /// Why a wall-clock sleep rather than a bare `Task.yield()` spin:
+    /// `Task.yield()` only yields to *already-ready* tasks — it
+    /// introduces no real delay. On a loaded CI host the spin can
+    /// exhaust its iteration ceiling before the other task is ever
+    /// scheduled, so the caller's `XCTAssertTrue(vm.isLoading)` would
+    /// silently fire on a still-`false` value. A short `Task.sleep`
+    /// inside the loop parks the host thread for real, gives the
+    /// scheduler a chance to run the other task, and (together with a
+    /// real wall-clock timeout) gives the test a clear deadline
+    /// rather than a fuzzy iteration count.
     private func waitUntil(
-        _ condition: @escaping @MainActor () -> Bool,
-        maxIterations: Int = 1_000
-    ) async {
-        var i = 0
-        while !condition() && i < maxIterations {
-            await Task.yield()
-            i += 1
+        timeout: TimeInterval,
+        pollInterval: TimeInterval = 0.005,
+        _ condition: @escaping @MainActor () -> Bool
+    ) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() { return true }
+            try? await Task.sleep(nanoseconds: UInt64(pollInterval * 1_000_000_000))
         }
+        return condition()
     }
 }
 

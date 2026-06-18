@@ -1,30 +1,48 @@
 import Foundation
 import Combine
 
-/// Minimal identity snapshot the dashboard needs to render its header.
+/// Minimal identity snapshot the dashboard needs to render its header
+/// and Signed-In Card.
 ///
 /// Deliberately a *small* value type rather than a re-export of
 /// `UserSession` or the BFF's `Customer`:
 ///
-///   - `UserSession` carries an OIDC access token and the full
-///     display name; the dashboard greeting only needs the first
-///     name and would otherwise pull the access token into a view
-///     that has no business knowing it.
+///   - `UserSession` carries an OIDC access token; the dashboard never
+///     needs that token and would otherwise pull it into a view that
+///     has no business knowing it.
 ///   - The BFF `Customer` payload is a wire type. Coupling the
 ///     ViewModel to it would force every test fixture to construct
-///     phone numbers, addresses, etc. that the greeting never reads.
+///     phone numbers, addresses, etc. that the dashboard never reads.
 ///
-/// Keep this type lean — if a future feature needs more identity
-/// fields, prefer adding a sibling value type over fattening this one.
+/// The fields here are exactly the ones the current story's
+/// acceptance criteria require — the header greeting's first name,
+/// and the Signed-In Card's avatar initials (first + last name), full
+/// name label (first + last name), and email. Keep this type lean —
+/// if a future feature needs more identity fields, prefer adding a
+/// sibling value type over fattening this one.
 public struct SignedInUser: Equatable, Hashable {
 
     /// First name used verbatim in the greeting (e.g. `"Demo"` →
-    /// "Good morning, Demo"). Caller is responsible for canonical
-    /// case; the BFF already returns it correctly cased.
+    /// "Good morning, Demo") and as the first half of the Signed-In
+    /// Card's avatar initials / full-name label. Caller is responsible
+    /// for canonical case; the BFF already returns it correctly cased.
     public let firstName: String
 
-    public init(firstName: String) {
+    /// Last name used as the second half of the Signed-In Card's
+    /// avatar initials (`firstName[0] + lastName[0]`) and the full
+    /// name label (`"\(firstName) \(lastName)"`). Canonical case is
+    /// the caller's responsibility, as for `firstName`.
+    public let lastName: String
+
+    /// Email address shown on the Signed-In Card. Surfaced verbatim
+    /// from the BFF `Customer` payload — the ViewModel does not
+    /// validate or normalise it.
+    public let email: String
+
+    public init(firstName: String, lastName: String, email: String) {
         self.firstName = firstName
+        self.lastName  = lastName
+        self.email     = email
     }
 }
 
@@ -64,6 +82,17 @@ public struct SignedInUser: Equatable, Hashable {
 /// `errorMessage` is cleared at the start of every `load()` so a
 /// retry doesn't surface the stale failure string while the new
 /// request is in flight.
+///
+/// ## Concurrent `load()` calls
+///
+/// SwiftUI can drive two `load()` calls in rapid succession — e.g.
+/// `.task` and `.onAppear` firing in the same render cycle, or a
+/// pull-to-refresh tapping while an auto-refresh is mid-flight.
+/// `@MainActor` serialises individual writes, but the network
+/// responses race independently: a slow first response could
+/// overwrite a fast second response's fresh data. `load()` therefore
+/// cancels any in-flight task before starting a new one, so only the
+/// most recent invocation can publish a result.
 ///
 /// ## `@MainActor`
 ///
@@ -106,6 +135,14 @@ public final class HomeDashboardViewModel: ObservableObject {
     private let user: SignedInUser
     private let now: () -> Date
 
+    // MARK: - In-flight load coordination
+
+    /// Currently-running load, if any. A fresh `load()` cancels this
+    /// before starting so two rapid invocations cannot race their
+    /// responses against each other. See the class-level doc comment
+    /// for the full rationale.
+    private var loadTask: Task<Void, Never>?
+
     // MARK: - Init
 
     /// - Parameters:
@@ -123,10 +160,7 @@ public final class HomeDashboardViewModel: ObservableObject {
         self.repository = repository
         self.user       = user
         self.now        = now
-        self.greeting   = GreetingProvider.greeting(
-            for:       now(),
-            firstName: user.firstName
-        )
+        self.greeting   = now().greeting(firstName: user.firstName)
     }
 
     // MARK: - Actions
@@ -139,11 +173,32 @@ public final class HomeDashboardViewModel: ObservableObject {
     ///   on failure).
     /// - Clears `errorMessage` at entry so a retry doesn't show the
     ///   previous failure string while the new request is in flight.
+    /// - Cancels any in-flight `load()` before starting, so a slow
+    ///   prior response cannot overwrite this call's fresh data.
     ///
     /// On success: replaces `accounts` with the fetched list.
     /// On failure: sets `errorMessage` and leaves `accounts`
-    /// unchanged (see state-machine doc above).
+    /// unchanged (see state-machine doc above). A `CancellationError`
+    /// is treated as neither success nor failure — the cancelled
+    /// call's state is left untouched so the superseding `load()`
+    /// owns the final values.
+    ///
+    /// The call `await`-s the in-flight task to completion, so
+    /// existing callers (and tests) that `await vm.load()` continue
+    /// to observe the same "returns when the fetch is done" contract.
     public func load() async {
+        loadTask?.cancel()
+        let task = Task { [weak self] in
+            await self?.performLoad()
+        }
+        loadTask = task
+        await task.value
+    }
+
+    /// Body of `load()`. Split out so cancellation lives in `load()`
+    /// (which is the public-facing entrypoint) and the actual state
+    /// mutation lives in a single linear method.
+    private func performLoad() async {
         isLoading    = true
         errorMessage = nil
 
@@ -151,8 +206,17 @@ public final class HomeDashboardViewModel: ObservableObject {
 
         do {
             let fetched = try await repository.fetchAccounts()
-            accounts    = fetched
+            // A superseding `load()` may have cancelled us while the
+            // repository call was suspended — bail before publishing
+            // stale data over the new call's results.
+            guard !Task.isCancelled else { return }
+            accounts = fetched
+        } catch is CancellationError {
+            // Superseded by a fresh load(); leave state alone so the
+            // new call owns the final values.
+            return
         } catch {
+            guard !Task.isCancelled else { return }
             errorMessage = "Couldn't load your accounts. Please try again."
         }
     }

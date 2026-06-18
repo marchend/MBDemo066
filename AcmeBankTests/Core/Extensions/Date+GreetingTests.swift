@@ -1,13 +1,14 @@
 import XCTest
 @testable import AcmeBank
 
-/// Boundary coverage for the three greeting windows.
+/// Boundary coverage for the three greeting windows on the
+/// `Date.greeting(firstName:calendar:)` extension.
 ///
 /// Every test builds its `Date` against a UTC Gregorian calendar so
 /// the hour component is exactly the literal we pass in — otherwise
 /// the CI machine's local time zone could shift our 05:00 boundary
 /// into a different window and produce a flaky pass.
-final class GreetingProviderTests: XCTestCase {
+final class DateGreetingTests: XCTestCase {
 
     // MARK: - Calendar / Date helpers
 
@@ -36,11 +37,8 @@ final class GreetingProviderTests: XCTestCase {
     }
 
     private func greet(hour: Int, minute: Int = 0, firstName: String = "Demo") -> String {
-        GreetingProvider.greeting(
-            for:       date(hour: hour, minute: minute),
-            firstName: firstName,
-            calendar:  utcCalendar
-        )
+        date(hour: hour, minute: minute)
+            .greeting(firstName: firstName, calendar: utcCalendar)
     }
 
     // MARK: - Morning window (05 — 11)
@@ -103,11 +101,28 @@ final class GreetingProviderTests: XCTestCase {
     }
 
     func test_greeting_preservesCapitalisationOfFirstName() {
-        // The BFF returns canonical case — the provider must NOT
+        // The BFF returns canonical case — the extension must NOT
         // re-capitalise (a user named "deMarco" should stay "deMarco").
         XCTAssertEqual(
             greet(hour: 13, firstName: "deMarco"),
             "Good afternoon, deMarco"
+        )
+    }
+
+    // MARK: - `greetingPrefix` standalone
+
+    func test_greetingPrefix_returnsPrefixOnly_withoutComma() {
+        XCTAssertEqual(
+            date(hour: 9).greetingPrefix(calendar: utcCalendar),
+            "Good morning"
+        )
+        XCTAssertEqual(
+            date(hour: 13).greetingPrefix(calendar: utcCalendar),
+            "Good afternoon"
+        )
+        XCTAssertEqual(
+            date(hour: 20).greetingPrefix(calendar: utcCalendar),
+            "Good evening"
         )
     }
 }
