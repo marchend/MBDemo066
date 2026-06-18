@@ -35,18 +35,24 @@ struct HomeDashboardView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
 
-                        GreetingHeader(greeting: viewModel.greeting)
+                        GreetingHeader(
+                            salutation: viewModel.greetingSalutation,
+                            firstName:  viewModel.greetingFirstName
+                        )
 
-                        // ── Account carousel ────────────────────────
+                        // ── Account carousel ───────────────────────
                         AccountCardCarousel(accounts: viewModel.accounts)
 
-                        // ── Inline error banner ─────────────────────
-                        if viewModel.errorMessage != nil {
-                            InlineErrorBannerView(message: viewModel.errorMessage)
-                                .padding(.horizontal, 20)
-                        }
+                        // ── Inline error banner ────────────────────
+                        // `InlineErrorBannerView` already renders
+                        // nothing when `message` is nil — pass the
+                        // optional through directly to match the
+                        // call-site pattern established by
+                        // `LoginView`.
+                        InlineErrorBannerView(message: viewModel.errorMessage)
+                            .padding(.horizontal, 20)
 
-                        // ── Quick actions ───────────────────────────
+                        // ── Quick actions ──────────────────────────
                         QuickActionsRow()
 
                         Spacer(minLength: 24)
