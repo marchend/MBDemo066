@@ -37,22 +37,38 @@ struct AcmeBankApp: App {
     /// stable, non-PII values (`"Demo Person"` / a fixture email) so
     /// the UI-test assertions can pin them.
     ///
-    /// Production launches see `state = .signedOut` and the login
-    /// screen, as before \u2014 the launch arg is only ever passed by the
-    /// XCUITest target.
+    /// ## Why `#if targetEnvironment(simulator)`?
+    /// The launch-arg branch is a documented auth-bypass: it skips
+    /// Okta and lands on `HomeDashboardView` with a stub session.
+    /// Shipping that branch in a device / App-Store binary would be
+    /// a meaningful security risk \u2014 any tool that can inject launch
+    /// arguments (a jailbreak tweak, an MDM payload, a paired
+    /// `xcrun devicectl` invocation) could trip it. `#if DEBUG`
+    /// doesn't help because XCUITests run against the Release-config
+    /// app bundle, but `targetEnvironment(simulator)` is a
+    /// **compile-time** condition that strips the branch from every
+    /// device build (Debug or Release) while preserving it for the
+    /// CI Simulator runs where `HomeDashboardUITests` actually
+    /// executes. Production launches see `state = .signedOut` and
+    /// the login screen, as before.
     private static func makeCoordinator() -> AppCoordinator {
         let coord = AppCoordinator(authService: OktaAuthService())
+        #if targetEnvironment(simulator)
         if CommandLine.arguments.contains("-uiTestSignedIn") {
             coord.applyTestSignedInState(session: stubUITestSession())
         }
+        #endif
         return coord
     }
 
+    #if targetEnvironment(simulator)
     /// Stub session used by `HomeDashboardUITests`. Values are stable
     /// so the test can pin the greeting first name (`"Demo"`). Never
     /// used outside the UI-test path \u2014 the access token is the empty
     /// string, so an inadvertent network call would 401 immediately
-    /// rather than impersonating a real user.
+    /// rather than impersonating a real user. Compiled in only on
+    /// Simulator builds; the symbol does not exist in device or
+    /// App-Store binaries.
     private static func stubUITestSession() -> UserSession {
         UserSession(
             userId:        "ui-test-user",
@@ -63,4 +79,5 @@ struct AcmeBankApp: App {
             deviceName:    "UITest Simulator"
         )
     }
+    #endif
 }

@@ -16,12 +16,27 @@ import SwiftUI
 /// ## Wiring
 /// `ContentView` calls `RootCoordinator.view(for: coordinator)` to
 /// produce the screen for the current state. The signed-in branch
-/// constructs a `HomeDashboardViewModel` backed by
+/// hands `HomeDashboardView` its **dependencies** \u2014 a
 /// `StubAccountsRepository()` and the `SignedInUser` projected from
-/// the freshly-decoded `UserSession`. (The repository will be swapped
-/// for the real `AccountAPIRepository` in a future PR \u2014 the
-/// composition-root seam here is the only place that needs to
-/// change.)
+/// the freshly-decoded `UserSession` \u2014 not a pre-built
+/// `HomeDashboardViewModel`. The view itself owns the ViewModel via
+/// `@StateObject`, so SwiftUI controls its lifetime and a re-render
+/// of `ContentView` doesn't silently rebuild it.
+/// (The repository will be swapped for the real
+/// `AccountAPIRepository` in a future PR \u2014 the composition-root seam
+/// here is the only place that needs to change.)
+///
+/// ## Why pass dependencies, not the ViewModel?
+/// `view(for:)` is called from `ContentView.body`, which SwiftUI
+/// re-evaluates every time `AppCoordinator` publishes (including
+/// future `loginViewModel.isSigningIn` / `errorMessage` mutations
+/// that may occur in the signed-in branch). If this method handed
+/// `HomeDashboardView` a freshly-allocated VM each time and the view
+/// bound to it via `@ObservedObject`, every re-render would discard
+/// the dashboard's loaded accounts and re-fire `load()`. Passing the
+/// `repository:` + `user:` dependencies and letting the view's
+/// `@StateObject` autoclosure init the VM once per view identity
+/// fixes the lifecycle.
 ///
 /// `HomeDashboardView` already wraps its content in its own
 /// `NavigationStack` (so the inline `.navigationDestination(for:)`
@@ -60,8 +75,11 @@ enum RootCoordinator {
     ///   `LoginViewModel` the coordinator owns, so error copy /
     ///   spinner state set inside `handleSignIn(...)` land on the
     ///   live form.
-    /// - On `.signedIn(session)`: `HomeDashboardView` wired to a
-    ///   freshly-constructed `HomeDashboardViewModel`. The session's
+    /// - On `.signedIn(session)`: `HomeDashboardView` constructed
+    ///   with its dependencies (`StubAccountsRepository()` +
+    ///   `SignedInUser(session:)`). The view owns its ViewModel via
+    ///   `@StateObject`, so a re-evaluation of `ContentView.body`
+    ///   does not blow away dashboard state. The session's
     ///   `UserSession` is projected to a `SignedInUser` here \u2014 the
     ///   feature layer never sees the access token.
     @ViewBuilder
@@ -72,10 +90,8 @@ enum RootCoordinator {
 
         case .signedIn(let session):
             HomeDashboardView(
-                viewModel: HomeDashboardViewModel(
-                    repository: StubAccountsRepository(),
-                    user:       SignedInUser(session: session)
-                )
+                repository: StubAccountsRepository(),
+                user:       SignedInUser(session: session)
             )
         }
     }
